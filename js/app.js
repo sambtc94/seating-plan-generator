@@ -9,6 +9,9 @@ const CLUSTER_COLOURS = [
   '#795548','#607d8b'
 ];
 
+const CELL_SIZE   = 84;  // 78px seat + 6px gap — used for grid↔freeform conversion
+const FREEFORM_PAD = 40; // padding inside the freeform canvas
+
 /* ============================================================
    STATE
 ============================================================ */
@@ -47,8 +50,14 @@ function shuffle(arr) {
   return a;
 }
 
-/** Euclidean distance between two seat objects {row, col} */
+/** Euclidean distance between two seat objects.
+ *  Uses pixel x/y for freeform seats, row/col for grid seats.
+ *  Returns a grid-unit equivalent (grid seats: 1 unit = one cell). */
 function seatDist(s1, s2) {
+  if (s1.x != null && s2.x != null) {
+    const dx = s1.x - s2.x, dy = s1.y - s2.y;
+    return Math.sqrt(dx * dx + dy * dy) / CELL_SIZE;
+  }
   const dr = s1.row - s2.row, dc = s1.col - s2.col;
   return Math.sqrt(dr * dr + dc * dc);
 }
@@ -89,7 +98,15 @@ function avatarColour(gender) {
  */
 function roomCreate(name = 'New Room', rows = 5, cols = 6) {
   const id = uid();
-  const room = { id, name, rows, cols, seats: [], clusters: [], archived: false };
+  const room = {
+    id, name, rows, cols,
+    seats: [], clusters: [],
+    archived:       false,
+    layoutMode:     'grid',   // 'grid' | 'freeform'
+    frontDirection: 'top',    // 'top' | 'right' | 'bottom' | 'left'
+    canvasW: 900,
+    canvasH: 700
+  };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       room.seats.push(makeSeat(id, r, c));
@@ -107,6 +124,11 @@ function makeSeat(roomId, r, c) {
     clusterId: null,
     studentId: null
   };
+}
+
+/** Create a seat at arbitrary pixel coordinates (freeform mode). */
+function makeFreeformSeat(roomId, x, y) {
+  return { id: uid(), row: -1, col: -1, x, y, enabled: true, clusterId: null, studentId: null };
 }
 
 function roomDelete(id) {
@@ -127,6 +149,63 @@ function roomArchive(id) {
 function roomUnarchive(id) {
   const room = state.rooms.find(r => r.id === id);
   if (room) room.archived = false;
+}
+
+/** Convert a grid-layout room to freeform, placing seats at their grid pixel positions. */
+function roomSwitchToFreeform(room) {
+  room.seats.forEach(s => {
+    s.x = FREEFORM_PAD + s.col * CELL_SIZE;
+    s.y = FREEFORM_PAD + s.row * CELL_SIZE;
+  });
+  room.canvasW = FREEFORM_PAD + room.cols * CELL_SIZE + FREEFORM_PAD;
+  room.canvasH = FREEFORM_PAD + room.rows * CELL_SIZE + FREEFORM_PAD;
+  room.layoutMode = 'freeform';
+}
+
+/** Snap all freeform seats to the nearest grid position and rebuild as a grid room. */
+function roomSwitchToGrid(room) {
+  const seen    = new Set();
+  const snapped = [];
+
+  // Sort by position so top-left seats "win" duplicates
+  const sorted = [...room.seats].filter(s => s.enabled).sort((a, b) =>
+    ((a.y ?? 0) - (b.y ?? 0)) || ((a.x ?? 0) - (b.x ?? 0))
+  );
+
+  for (const s of sorted) {
+    const col = Math.max(0, Math.round(((s.x ?? 0) - FREEFORM_PAD) / CELL_SIZE));
+    const row = Math.max(0, Math.round(((s.y ?? 0) - FREEFORM_PAD) / CELL_SIZE));
+    const key = `${row}_${col}`;
+    if (seen.has(key)) continue; // discard duplicate position
+    seen.add(key);
+    snapped.push(Object.assign({}, s, { row, col, x: undefined, y: undefined }));
+  }
+
+  if (!snapped.length) { alert('No seats to convert.'); return; }
+
+  const maxRow = Math.max(...snapped.map(s => s.row));
+  const maxCol = Math.max(...snapped.map(s => s.col));
+  room.rows = maxRow + 1;
+  room.cols = maxCol + 1;
+
+  // Build full grid: snapped seats enabled; gaps disabled
+  const seatMap = {};
+  snapped.forEach(s => { seatMap[`${s.row}_${s.col}`] = s; });
+
+  room.seats = [];
+  for (let r = 0; r <= maxRow; r++) {
+    for (let c = 0; c <= maxCol; c++) {
+      const key = `${r}_${c}`;
+      if (seatMap[key]) {
+        room.seats.push(seatMap[key]);
+      } else {
+        const empty = makeSeat(room.id, r, c);
+        empty.enabled = false;
+        room.seats.push(empty);
+      }
+    }
+  }
+  room.layoutMode = 'grid';
 }
 
 /**
@@ -212,13 +291,15 @@ function clusterDelete(room, id) {
 }
 
 /**
- * BFS auto-detect: group all mutually 8-connected enabled seats into clusters.
- * Components of size 1 are left without a cluster (isolated seats).
+ * BFS auto-detect: group all mutually adjacent enabled seats into clusters.
+ * Grid mode: 8-connected adjacency. Freeform mode: within FREEFORM_ADJACENCY_PX pixels.
  */
 function autoDetectClusters(room) {
   room.clusters = [];
   room.seats.forEach(s => { s.clusterId = null; });
   if (state.activeClusterId) state.activeClusterId = null;
+
+  const FREEFORM_ADJACENCY_PX = 170; // ~2 seat widths
 
   const enabled = room.seats.filter(s => s.enabled);
   const visited = new Set();
@@ -236,11 +317,11 @@ function autoDetectClusters(room) {
       const cur = queue.shift();
       component.push(cur);
       enabled.forEach(n => {
-        if (
-          !visited.has(n.id) &&
-          Math.abs(n.row - cur.row) <= 1 &&
-          Math.abs(n.col - cur.col) <= 1
-        ) {
+        if (visited.has(n.id)) return;
+        const adjacent = room.layoutMode === 'freeform'
+          ? Math.hypot((n.x ?? 0) - (cur.x ?? 0), (n.y ?? 0) - (cur.y ?? 0)) <= FREEFORM_ADJACENCY_PX
+          : Math.abs(n.row - cur.row) <= 1 && Math.abs(n.col - cur.col) <= 1;
+        if (adjacent) {
           visited.add(n.id);
           queue.push(n);
         }
@@ -469,7 +550,15 @@ function applyStateData(data) {
 
 /** Ensure a room object has all expected fields (backwards-compat). */
 function normaliseRoom(room) {
-  return Object.assign({ archived: false, clusters: [], seats: [] }, room);
+  return Object.assign({
+    archived:       false,
+    clusters:       [],
+    seats:          [],
+    layoutMode:     'grid',
+    frontDirection: 'top',
+    canvasW:        900,
+    canvasH:        700
+  }, room);
 }
 
 function saveJSON() {
@@ -782,31 +871,92 @@ function buildStudentCard(student, isSeated) {
 }
 
 /* ============================================================
-   RENDER — GRID
+   RENDER — GRID (dispatcher)
 ============================================================ */
 function renderGrid() {
-  const grid    = document.getElementById('room-grid');
-  const wrapper = document.getElementById('grid-wrapper');
+  const grid = document.getElementById('room-grid');
   grid.innerHTML = '';
+  grid.className = 'room-grid'; // reset any added classes
 
   const room = currentRoom();
   if (!room) {
     grid.innerHTML = '<div class="no-room-msg">No room selected.<br>Create a room using "＋ New Room".</div>';
     document.getElementById('room-name-display').textContent = 'No room selected';
+    updateRoomControls(null);
+    updateFrontLabel(null);
     return;
   }
 
   document.getElementById('room-name-display').textContent = room.name;
-  document.getElementById('rows-input').value = room.rows;
-  document.getElementById('cols-input').value = room.cols;
+  updateRoomControls(room);
+  updateFrontLabel(room);
 
-  // Update archive button label
+  if (room.layoutMode === 'freeform') {
+    renderFreeformGrid(room, grid);
+    if (state.mode === 'layout') {
+      showInfoBar('Click canvas to add desk  ·  Drag to move  ·  Right-click to delete');
+    }
+  } else {
+    renderRegularGrid(room, grid);
+  }
+}
+
+/* ── Front label & direction ─────────────────────────────── */
+function updateFrontLabel(room) {
+  const wrapper = document.getElementById('grid-wrapper');
+  const label   = document.getElementById('front-label');
+  const dir     = room?.frontDirection ?? 'top';
+
+  if (wrapper) wrapper.dataset.frontDir = dir;
+  const arrows = { top: '▲', right: '►', bottom: '▼', left: '◄' };
+  if (label) label.textContent = (arrows[dir] ?? '▲') + ' FRONT OF CLASS';
+}
+
+/* ── Room header controls ────────────────────────────────── */
+function updateRoomControls(room) {
+  const isFreeform = room?.layoutMode === 'freeform';
+
+  // Archive button label
   const archBtn = document.getElementById('archive-room-btn');
   if (archBtn) {
-    archBtn.textContent = room.archived ? '📤 Unarchive' : '📦 Archive';
-    archBtn.title = room.archived ? 'Restore this room' : 'Archive this room';
+    archBtn.textContent = room?.archived ? '📤 Unarchive' : '📦 Archive';
+    archBtn.title       = room?.archived ? 'Restore this room' : 'Archive this room';
   }
 
+  // Grid vs canvas size groups
+  const gridGroup   = document.getElementById('grid-size-group');
+  const canvasGroup = document.getElementById('canvas-size-group');
+  if (gridGroup)   gridGroup.style.display   = isFreeform ? 'none' : 'flex';
+  if (canvasGroup) canvasGroup.style.display = isFreeform ? 'flex' : 'none';
+
+  if (room && !isFreeform) {
+    document.getElementById('rows-input').value = room.rows;
+    document.getElementById('cols-input').value = room.cols;
+  }
+  if (room && isFreeform) {
+    document.getElementById('canvas-w-input').value = room.canvasW ?? 900;
+    document.getElementById('canvas-h-input').value = room.canvasH ?? 700;
+  }
+
+  // Layout toggle button
+  const layoutBtn = document.getElementById('layout-toggle-btn');
+  if (layoutBtn) {
+    layoutBtn.textContent = isFreeform ? '⊞ Grid Mode' : '⊞ Freeform';
+    layoutBtn.className   = isFreeform ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+  }
+
+  // "Edit Layout" mode button: only visible for freeform rooms
+  const layoutModeBtn = document.getElementById('mode-layout');
+  if (layoutModeBtn) layoutModeBtn.style.display = isFreeform ? '' : 'none';
+
+  // Direction buttons highlight
+  document.querySelectorAll('.dir-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.dir === (room?.frontDirection ?? 'top'));
+  });
+}
+
+/* ── Regular (grid) rendering ────────────────────────────── */
+function renderRegularGrid(room, grid) {
   grid.style.gridTemplateColumns = `repeat(${room.cols}, 78px)`;
   grid.style.gridTemplateRows    = `repeat(${room.rows}, 78px)`;
 
@@ -823,11 +973,11 @@ function renderGrid() {
         cell.addEventListener('click', () => {
           if (state.mode !== 'toggle') return;
           if (!seat) {
-            // create a new seat here
             room.seats.push(makeSeat(room.id, r, c));
           } else {
             seat.enabled = true;
           }
+          scheduleAutosave();
           renderGrid();
         });
 
@@ -835,99 +985,214 @@ function renderGrid() {
         continue;
       }
 
-      // ── Enabled seat ────────────────────────────────────────
+      // Enabled seat
       cell.dataset.seatId = seat.id;
+      applyClusterStyling(cell, seat, room);
 
-      // Cluster styling
-      if (seat.clusterId) {
-        const cl = room.clusters.find(x => x.id === seat.clusterId);
-        if (cl) {
-          cell.classList.add('in-cluster');
-          cell.style.borderColor     = cl.colour;
-          cell.style.backgroundColor = cl.colour + '22';
-        }
-      }
-
-      // Mode-specific classes
       if (state.mode === 'toggle')  cell.classList.add('toggleable');
       if (state.mode === 'cluster') cell.classList.add('cluster-mode');
 
-      if (state.mode === 'cluster' &&
-          state.activeClusterId &&
-          seat.clusterId === state.activeClusterId) {
-        const cl = room.clusters.find(x => x.id === state.activeClusterId);
-        if (cl) {
-          cell.style.borderColor     = cl.colour;
-          cell.style.backgroundColor = cl.colour + '44';
-        }
-      }
-
-      // Student in seat
       if (seat.studentId) {
         cell.classList.add('has-student');
         const student = studentById(seat.studentId);
         if (student) cell.appendChild(buildMiniStudent(student, seat.id));
       }
 
-      // ── Event: click ────────────────────────────────────────
       cell.addEventListener('click', () => {
         if (state.mode === 'toggle') {
-          seat.enabled    = false;
-          seat.studentId  = null;
-          seat.clusterId  = null;
+          seat.enabled   = false;
+          seat.studentId = null;
+          seat.clusterId = null;
+          scheduleAutosave();
           renderGrid();
-
         } else if (state.mode === 'cluster') {
-          if (!state.activeClusterId) {
-            showInfoBar('Select a cluster in the right panel first, or create one.');
-            return;
-          }
-          seat.clusterId = (seat.clusterId === state.activeClusterId)
-            ? null
-            : state.activeClusterId;
-          renderGrid();
-          renderClusterPanel();
+          handleClusterClick(seat, room);
         }
       });
 
-      // ── Drag-and-drop drop target (only in move mode) ───────
-      if (state.mode === 'move') {
-        cell.addEventListener('dragover', e => {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-          cell.classList.add('drag-over');
-        });
-        cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
-        cell.addEventListener('drop', e => {
-          e.preventDefault();
-          cell.classList.remove('drag-over');
-          handleDrop(seat.id);
-        });
-      }
+      if (state.mode === 'move') attachDropTarget(cell, seat.id);
 
-      // ── Hover info ──────────────────────────────────────────
       cell.addEventListener('mouseenter', () => {
-        if (seat.studentId) {
-          const s = studentById(seat.studentId);
-          if (s) {
-            const parts = [`${s.name}`];
-            if (s.gender) parts.push(s.gender);
-            if (s.marks != null) parts.push(`Marks: ${s.marks}%`);
-            if (s.sitNear.length)
-              parts.push(`Sit near: ${s.sitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
-            if (s.doNotSitNear.length)
-              parts.push(`Separate from: ${s.doNotSitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
-            showInfoBar(parts.join('  |  '));
-          }
-        } else {
-          showInfoBar(`Seat row ${r + 1}, col ${c + 1} — empty`);
-        }
+        if (seat.studentId) showStudentHover(seat.studentId);
+        else showInfoBar(`Seat row ${r + 1}, col ${c + 1} — empty`);
       });
       cell.addEventListener('mouseleave', () => showInfoBar(''));
 
       grid.appendChild(cell);
     }
   }
+}
+
+/* ── Freeform rendering ──────────────────────────────────── */
+function renderFreeformGrid(room, grid) {
+  grid.classList.add('freeform');
+  grid.style.cssText = `width:${room.canvasW}px; height:${room.canvasH}px;`;
+
+  room.seats.forEach(seat => {
+    const cell = document.createElement('div');
+    cell.className = 'seat-cell freeform-seat';
+    cell.dataset.seatId = seat.id;
+    cell.style.left = (seat.x ?? 0) + 'px';
+    cell.style.top  = (seat.y ?? 0) + 'px';
+
+    applyClusterStyling(cell, seat, room);
+
+    if (state.mode === 'cluster') cell.classList.add('cluster-mode');
+
+    if (seat.studentId) {
+      cell.classList.add('has-student');
+      const student = studentById(seat.studentId);
+      if (student) {
+        const mini = buildMiniStudent(student, seat.id);
+        if (state.mode === 'layout') mini.draggable = false;
+        cell.appendChild(mini);
+      }
+    }
+
+    if (state.mode === 'layout') {
+      cell.classList.add('layout-draggable');
+      attachFreeformDrag(cell, seat, room);
+    }
+
+    cell.addEventListener('click', () => {
+      if (state.mode === 'cluster') handleClusterClick(seat, room);
+    });
+
+    if (state.mode === 'move') attachDropTarget(cell, seat.id);
+
+    cell.addEventListener('mouseenter', () => {
+      if (seat.studentId) showStudentHover(seat.studentId);
+      else showInfoBar(`Desk — empty`);
+    });
+    cell.addEventListener('mouseleave', () => {
+      if (state.mode !== 'layout') showInfoBar('');
+    });
+
+    grid.appendChild(cell);
+  });
+
+  // Click on empty canvas in layout mode → add a desk
+  if (state.mode === 'layout') {
+    grid.classList.add('layout-canvas');
+    grid.addEventListener('pointerdown', e => {
+      if (e.target !== grid) return;
+      e.preventDefault();
+      const rect = grid.getBoundingClientRect();
+      const x = Math.round(Math.max(0, Math.min(room.canvasW - 78, e.clientX - rect.left - 39)));
+      const y = Math.round(Math.max(0, Math.min(room.canvasH - 78, e.clientY - rect.top  - 39)));
+      room.seats.push(makeFreeformSeat(room.id, x, y));
+      scheduleAutosave();
+      renderGrid();
+    });
+  }
+}
+
+/* ── Freeform seat drag (pointer events) ─────────────────── */
+function attachFreeformDrag(cell, seat, room) {
+  cell.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return; // left button only
+    e.stopPropagation();
+
+    const startClientX = e.clientX, startClientY = e.clientY;
+    const origX = seat.x ?? 0, origY = seat.y ?? 0;
+    let moved = false;
+
+    cell.setPointerCapture(e.pointerId);
+    cell.classList.add('dragging');
+
+    const onMove = ev => {
+      const dx = ev.clientX - startClientX;
+      const dy = ev.clientY - startClientY;
+      if (!moved && Math.hypot(dx, dy) < 4) return;
+      moved = true;
+      seat.x = Math.max(0, Math.min(room.canvasW - 78, origX + dx));
+      seat.y = Math.max(0, Math.min(room.canvasH - 78, origY + dy));
+      cell.style.left = seat.x + 'px';
+      cell.style.top  = seat.y + 'px';
+    };
+
+    const onUp = () => {
+      cell.removeEventListener('pointermove', onMove);
+      cell.removeEventListener('pointerup',   onUp);
+      cell.classList.remove('dragging');
+      if (moved) {
+        seat.x = Math.round(seat.x);
+        seat.y = Math.round(seat.y);
+        scheduleAutosave();
+      }
+    };
+
+    cell.addEventListener('pointermove', onMove);
+    cell.addEventListener('pointerup',   onUp);
+  });
+
+  // Right-click to delete in layout mode
+  cell.addEventListener('contextmenu', e => {
+    if (state.mode !== 'layout') return;
+    e.preventDefault();
+    if (seat.studentId && !confirm('This desk has a student assigned. Delete it anyway?')) return;
+    if (seat.studentId) {
+      const existing = seatByStudentId(currentRoom(), seat.studentId);
+      if (existing) existing.studentId = null;
+    }
+    room.seats = room.seats.filter(s => s.id !== seat.id);
+    scheduleAutosave();
+    renderGrid();
+    renderStudentList();
+  });
+}
+
+/* ── Shared seat helpers ─────────────────────────────────── */
+function applyClusterStyling(cell, seat, room) {
+  if (!seat.clusterId) return;
+  const cl = room.clusters.find(x => x.id === seat.clusterId);
+  if (!cl) return;
+  cell.classList.add('in-cluster');
+  cell.style.borderColor     = cl.colour;
+  cell.style.backgroundColor = cl.colour + '22';
+
+  if (state.mode === 'cluster' && state.activeClusterId === seat.clusterId) {
+    cell.style.borderColor     = cl.colour;
+    cell.style.backgroundColor = cl.colour + '44';
+  }
+}
+
+function handleClusterClick(seat, room) {
+  if (!state.activeClusterId) {
+    showInfoBar('Select a cluster in the right panel first, or create one.');
+    return;
+  }
+  seat.clusterId = (seat.clusterId === state.activeClusterId) ? null : state.activeClusterId;
+  scheduleAutosave();
+  renderGrid();
+  renderClusterPanel();
+}
+
+function attachDropTarget(cell, seatId) {
+  cell.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    cell.classList.add('drag-over');
+  });
+  cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
+  cell.addEventListener('drop', e => {
+    e.preventDefault();
+    cell.classList.remove('drag-over');
+    handleDrop(seatId);
+  });
+}
+
+function showStudentHover(studentId) {
+  const s = studentById(studentId);
+  if (!s) return;
+  const parts = [s.name];
+  if (s.gender) parts.push(s.gender);
+  if (s.marks != null) parts.push(`Marks: ${s.marks}%`);
+  if (s.sitNear.length)
+    parts.push(`Sit near: ${s.sitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
+  if (s.doNotSitNear.length)
+    parts.push(`Separate from: ${s.doNotSitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
+  showInfoBar(parts.join('  |  '));
 }
 
 function showInfoBar(text) {
@@ -1357,6 +1622,11 @@ function newClassSetFromModal() {
    MODE SWITCHING
 ============================================================ */
 function setMode(mode) {
+  // 'layout' only makes sense for freeform rooms
+  if (mode === 'layout' && currentRoom()?.layoutMode !== 'freeform') {
+    alert('Switch this room to "Freeform" layout first using the ⊞ Freeform button in the room header.');
+    return;
+  }
   state.mode = mode;
   document.querySelectorAll('.mode-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
@@ -1436,6 +1706,54 @@ function initEvents() {
       roomDelete(room.id);
       renderAll();
     }
+  });
+
+  // ── Front direction buttons ───────────────────────────────
+  document.querySelectorAll('.dir-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const room = currentRoom();
+      if (!room) return;
+      room.frontDirection = btn.dataset.dir;
+      updateFrontLabel(room);
+      updateRoomControls(room);
+      scheduleAutosave();
+    });
+  });
+
+  // ── Layout mode toggle (grid ↔ freeform) ──────────────────
+  document.getElementById('layout-toggle-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    if (room.layoutMode === 'grid') {
+      if (confirm('Switch to freeform layout?\nDesks will be placed at their current grid positions and can be moved freely.\nYou can switch back to grid at any time.')) {
+        roomSwitchToFreeform(room);
+        state.mode = 'layout'; // auto-enter layout mode
+        renderAll();
+        scheduleAutosave();
+      }
+    } else {
+      if (confirm('Switch back to grid layout?\nDesks will be snapped to the nearest grid position.\nThis may reorder your layout.')) {
+        roomSwitchToGrid(room);
+        if (state.mode === 'layout') state.mode = 'move'; // layout mode no longer valid
+        renderAll();
+        scheduleAutosave();
+      }
+    }
+  });
+
+  // ── Canvas resize (freeform mode) ─────────────────────────
+  document.getElementById('resize-canvas-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    const w = parseInt(document.getElementById('canvas-w-input').value, 10);
+    const h = parseInt(document.getElementById('canvas-h-input').value, 10);
+    if (isNaN(w) || isNaN(h) || w < 300 || h < 200 || w > 3000 || h > 2000) {
+      alert('Canvas width must be 300–3000 and height 200–2000.'); return;
+    }
+    room.canvasW = w;
+    room.canvasH = h;
+    renderGrid();
+    scheduleAutosave();
   });
 
   // ── Mode buttons ─────────────────────────────────────────
