@@ -9,6 +9,20 @@ const CLUSTER_COLOURS = [
   '#795548','#607d8b'
 ];
 
+const STUDENT_FLAGS = [
+  { key: 'SEN',       label: 'SEN',       colour: '#e74c3c' },
+  { key: 'EAL',       label: 'EAL',       colour: '#3498db' },
+  { key: 'Gifted',    label: 'Gifted',    colour: '#f1c40f' },
+  { key: 'Behaviour', label: 'Behaviour', colour: '#e67e22' }
+];
+
+const SEAT_LABELS = {
+  teacher:    { icon: '👨‍🏫', name: "Teacher's Desk" },
+  whiteboard: { icon: '📋',  name: 'Whiteboard'      },
+  bookshelf:  { icon: '📚',  name: 'Bookshelf'       },
+  projector:  { icon: '📽',  name: 'Projector'       }
+};
+
 const CELL_SIZE              = 84;  // 78px seat + 6px gap — used for grid↔freeform conversion
 const FREEFORM_PAD           = 40;  // padding inside the freeform canvas
 const SEAT_WIDTH             = 78;  // seat cell width/height in px
@@ -36,6 +50,65 @@ const state = {
 let editCtx = { type: null, id: null };
 let pendingPhoto = null; // base64 string | null
 let editingClassSetId = null; // class set currently open in editor
+
+/** Returns true if a seat can receive a student assignment. */
+function isSeatAssignable(seat) {
+  return seat.enabled && !seat.label;
+}
+
+/* ============================================================
+   UNDO / REDO
+============================================================ */
+const MAX_HISTORY = 20;
+let undoStack = []; // array of {rooms, students} snapshots (BEFORE the mutation)
+let redoStack = []; // forward stack (cleared on new mutation)
+
+function snapshotState() {
+  return {
+    rooms:    JSON.parse(JSON.stringify(state.rooms)),
+    students: JSON.parse(JSON.stringify(state.students))
+  };
+}
+
+function pushHistory() {
+  undoStack.push(snapshotState());
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack = [];
+  updateUndoRedoBtns();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshotState());
+  const prev = undoStack.pop();
+  state.rooms    = prev.rooms.map(normaliseRoom);
+  state.students = prev.students.map(normaliseStudent);
+  if (!state.rooms.find(r => r.id === state.currentRoomId)) {
+    state.currentRoomId = state.rooms.find(r => !r.archived)?.id ?? null;
+  }
+  updateUndoRedoBtns();
+  renderAll();
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshotState());
+  const next = redoStack.pop();
+  state.rooms    = next.rooms.map(normaliseRoom);
+  state.students = next.students.map(normaliseStudent);
+  if (!state.rooms.find(r => r.id === state.currentRoomId)) {
+    state.currentRoomId = state.rooms.find(r => !r.archived)?.id ?? null;
+  }
+  updateUndoRedoBtns();
+  renderAll();
+}
+
+function updateUndoRedoBtns() {
+  const undoBtn = document.getElementById('undo-btn');
+  const redoBtn = document.getElementById('redo-btn');
+  if (undoBtn) undoBtn.disabled = undoStack.length === 0;
+  if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+}
 
 /* ============================================================
    UTILITIES
@@ -125,13 +198,14 @@ function makeSeat(roomId, r, c) {
     row: r, col: c,
     enabled: true,
     clusterId: null,
-    studentId: null
+    studentId: null,
+    label: null
   };
 }
 
 /** Create a seat at arbitrary pixel coordinates (freeform mode). */
 function makeFreeformSeat(roomId, x, y) {
-  return { id: uid(), row: -1, col: -1, x, y, enabled: true, clusterId: null, studentId: null };
+  return { id: uid(), row: -1, col: -1, x, y, enabled: true, clusterId: null, studentId: null, label: null };
 }
 
 function roomDelete(id) {
@@ -152,6 +226,44 @@ function roomArchive(id) {
 function roomUnarchive(id) {
   const room = state.rooms.find(r => r.id === id);
   if (room) room.archived = false;
+}
+
+/**
+ * Duplicate a room: copies layout, clusters, and seat enabled/cluster state,
+ * but does NOT copy student assignments.
+ */
+function roomDuplicate(room) {
+  // Map old cluster IDs → new cluster IDs so seat references stay correct
+  const clusterIdMap = {};
+  const newClusters = room.clusters.map(cl => {
+    const newId = uid();
+    clusterIdMap[cl.id] = newId;
+    return { ...cl, id: newId };
+  });
+
+  const newSeats = room.seats.map(s => ({
+    ...s,
+    id:        uid(),
+    studentId: null, // clear assignments
+    clusterId: s.clusterId ? (clusterIdMap[s.clusterId] ?? null) : null
+  }));
+
+  const newRoom = {
+    id:             uid(),
+    name:           room.name + ' (copy)',
+    rows:           room.rows,
+    cols:           room.cols,
+    seats:          newSeats,
+    clusters:       newClusters,
+    archived:       false,
+    layoutMode:     room.layoutMode,
+    frontDirection: room.frontDirection,
+    canvasW:        room.canvasW,
+    canvasH:        room.canvasH
+  };
+
+  state.rooms.push(newRoom);
+  return newRoom;
 }
 
 /** Convert a grid-layout room to freeform, placing seats at their grid pixel positions. */
@@ -248,11 +360,23 @@ function studentCreate(data = {}) {
     gender:        data.gender || '',
     marks:         data.marks  != null ? Number(data.marks) : null,
     photo:         data.photo  || null,
+    notes:         data.notes  || '',
+    flags:         Array.isArray(data.flags) ? [...data.flags] : [],
     sitNear:       Array.isArray(data.sitNear)      ? [...data.sitNear]      : [],
     doNotSitNear:  Array.isArray(data.doNotSitNear) ? [...data.doNotSitNear] : []
   };
   state.students.push(s);
   return s;
+}
+
+/** Ensure a student object has all expected fields (backwards-compat). */
+function normaliseStudent(s) {
+  return Object.assign({
+    notes:        '',
+    flags:        [],
+    sitNear:      [],
+    doNotSitNear: []
+  }, s);
 }
 
 function studentUpdate(id, data) {
@@ -386,7 +510,8 @@ function assignStudents(method) {
   // Clear existing
   room.seats.forEach(s => { s.studentId = null; });
 
-  const seats = room.seats.filter(s => s.enabled);
+  // Only assignable seats (enabled and not labelled as a room object)
+  const seats = room.seats.filter(s => isSeatAssignable(s));
   if (!seats.length) { alert('No seats available in this room.'); return; }
 
   let students = [...visibleStudents()];
@@ -445,6 +570,16 @@ function assignStudents(method) {
 
     best.studentId = student.id;
   }
+
+  // ── Save to per-room assignment history ────────────────────
+  room.assignmentHistory = room.assignmentHistory || [];
+  room.assignmentHistory.unshift({
+    id:     uid(),
+    ts:     Date.now(),
+    method,
+    seats:  room.seats.map(s => ({ id: s.id, studentId: s.studentId }))
+  });
+  if (room.assignmentHistory.length > 10) room.assignmentHistory.pop();
 }
 
 /* ============================================================
@@ -456,11 +591,13 @@ function handleDrop(targetSeatId) {
   if (!room) return;
 
   const target = seatById(room, targetSeatId);
-  if (!target || !target.enabled) return;
+  if (!target || !isSeatAssignable(target)) return;
 
   const { studentId, fromSeatId } = state.drag;
   if (!studentId) return;
   if (target.studentId === studentId) { resetDrag(); return; }
+
+  pushHistory();
 
   const displacedId = target.studentId; // may be null
 
@@ -540,7 +677,7 @@ function loadFromStorage() {
 function applyStateData(data) {
   if (!data || (data.version !== 1 && data.version !== 2)) return false;
   state.rooms         = (data.rooms    || []).map(normaliseRoom);
-  state.students      = data.students  || [];
+  state.students      = (data.students || []).map(normaliseStudent);
   state.classSets     = data.classSets || [];
   state.currentRoomId = data.currentRoomId ?? state.rooms.find(r => !r.archived)?.id ?? null;
   state.mode              = 'move';
@@ -552,13 +689,14 @@ function applyStateData(data) {
 /** Ensure a room object has all expected fields (backwards-compat). */
 function normaliseRoom(room) {
   return Object.assign({
-    archived:       false,
-    clusters:       [],
-    seats:          [],
-    layoutMode:     'grid',
-    frontDirection: 'top',
-    canvasW:        900,
-    canvasH:        700
+    archived:          false,
+    clusters:          [],
+    seats:             [],
+    layoutMode:        'grid',
+    frontDirection:    'top',
+    canvasW:           900,
+    canvasH:           700,
+    assignmentHistory: []
   }, room);
 }
 
@@ -586,6 +724,19 @@ function loadJSON(data) {
     throw new Error('Unsupported or invalid file format (expected version 1 or 2).');
   }
   renderAll();
+}
+
+/**
+ * Open the browser's print/save-as-PDF dialog for the current seating plan.
+ * The @media print CSS rules in styles.css hide the UI chrome so only the
+ * room grid is visible in the printed output.
+ */
+function printSeatingPlan() {
+  if (!currentRoom()) {
+    alert('Please select a room to print.');
+    return;
+  }
+  window.print();
 }
 
 /**
@@ -711,8 +862,385 @@ function parseCSVRows(csvText) {
 }
 
 /* ============================================================
-   RENDER — TABS
+   CSV EXPORT
 ============================================================ */
+function exportCSV() {
+  const room = currentRoom();
+  if (!room) { alert('Please select a room first.'); return; }
+
+  const assignedSeats = room.seats.filter(s => isSeatAssignable(s) && s.studentId);
+  if (!assignedSeats.length) { alert('No students are assigned in this room.'); return; }
+
+  const rows = [['Name', 'Row', 'Col', 'Cluster', 'Marks', 'Flags', 'Notes']];
+  assignedSeats.forEach(seat => {
+    const student = studentById(seat.studentId);
+    if (!student) return;
+    const cluster = seat.clusterId
+      ? (room.clusters.find(c => c.id === seat.clusterId)?.name ?? '') : '';
+    const r = seat.row >= 0 ? seat.row + 1 : '-';
+    const c = seat.col >= 0 ? seat.col + 1 : '-';
+    rows.push([
+      student.name,
+      r, c,
+      cluster,
+      student.marks ?? '',
+      (student.flags || []).join('; '),
+      student.notes || ''
+    ]);
+  });
+
+  const csvContent = rows.map(r => r.map(cell => {
+    const s = String(cell);
+    return (s.includes(',') || s.includes('"') || s.includes('\n'))
+      ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(',')).join('\r\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `${room.name.replace(/[^a-z0-9]/gi, '_')}_seating.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ============================================================
+   STATISTICS
+============================================================ */
+function computeStats(room) {
+  if (!room) return null;
+  const seats    = room.seats.filter(isSeatAssignable);
+  const assigned = seats.filter(s => s.studentId);
+  const students = visibleStudents();
+  const seatedIds = new Set(assigned.map(s => s.studentId));
+  const unseated  = students.filter(s => !seatedIds.has(s.id));
+
+  const seatedStudents = assigned.map(s => studentById(s.studentId)).filter(Boolean);
+  const gender = { male: 0, female: 0, other: 0 };
+  seatedStudents.forEach(s => {
+    if (s.gender === 'male') gender.male++;
+    else if (s.gender === 'female') gender.female++;
+    else gender.other++;
+  });
+
+  let sitNearTotal = 0, sitNearSatisfied = 0;
+  let doNotTotal   = 0, doNotViolations  = 0;
+  // Avoid double-counting (each pair once)
+  const checked = new Set();
+  seatedStudents.forEach(student => {
+    const seat = seats.find(s => s.studentId === student.id);
+    if (!seat) return;
+    (student.sitNear || []).forEach(nearId => {
+      const pairKey = [student.id, nearId].sort().join(':');
+      if (checked.has('sn:' + pairKey)) return;
+      checked.add('sn:' + pairKey);
+      const nearSeat = seats.find(s => s.studentId === nearId);
+      if (!nearSeat) return;
+      sitNearTotal++;
+      if (seatDist(seat, nearSeat) <= 2) sitNearSatisfied++;
+    });
+    (student.doNotSitNear || []).forEach(awayId => {
+      const pairKey = [student.id, awayId].sort().join(':');
+      if (checked.has('dn:' + pairKey)) return;
+      checked.add('dn:' + pairKey);
+      const awaySeat = seats.find(s => s.studentId === awayId);
+      if (!awaySeat) return;
+      doNotTotal++;
+      if (seatDist(seat, awaySeat) <= 2) doNotViolations++;
+    });
+  });
+
+  const clusterStats = room.clusters.map(cl => {
+    const clSeats    = seats.filter(s => s.clusterId === cl.id);
+    const clStudents = clSeats.map(s => studentById(s.studentId)).filter(Boolean);
+    const cg = { male: 0, female: 0, other: 0 };
+    clStudents.forEach(s => {
+      if (s.gender === 'male') cg.male++;
+      else if (s.gender === 'female') cg.female++;
+      else cg.other++;
+    });
+    return { name: cl.name, colour: cl.colour, count: clStudents.length, gender: cg };
+  });
+
+  return {
+    totalSeats: seats.length, assigned: assigned.length,
+    empty: seats.length - assigned.length, unseated: unseated.length,
+    gender, sitNearTotal, sitNearSatisfied,
+    doNotTotal, doNotViolations, clusterStats
+  };
+}
+
+function showStatsModal() {
+  const room = currentRoom();
+  const body = document.getElementById('stats-body');
+  body.innerHTML = '';
+
+  if (!room) {
+    body.innerHTML = '<p class="empty-msg">No room selected.</p>';
+    showModalEl('stats-modal'); return;
+  }
+
+  const st = computeStats(room);
+  if (!st) return;
+
+  const pct = (n, d) => d ? Math.round(n / d * 100) : 0;
+
+  body.innerHTML = `
+    <div class="stats-grid">
+      <div class="stats-card">
+        <div class="stats-number">${st.assigned}</div>
+        <div class="stats-label">Assigned</div>
+      </div>
+      <div class="stats-card">
+        <div class="stats-number">${st.empty}</div>
+        <div class="stats-label">Empty seats</div>
+      </div>
+      <div class="stats-card">
+        <div class="stats-number">${st.unseated}</div>
+        <div class="stats-label">Unseated students</div>
+      </div>
+    </div>
+
+    <div class="stats-section">
+      <h4>Gender Distribution</h4>
+      <div class="stats-grid">
+        <div class="stats-card">
+          <div class="stats-number stats-male">${st.gender.male}</div>
+          <div class="stats-label">Male</div>
+        </div>
+        <div class="stats-card">
+          <div class="stats-number stats-female">${st.gender.female}</div>
+          <div class="stats-label">Female</div>
+        </div>
+        <div class="stats-card">
+          <div class="stats-number stats-other">${st.gender.other}</div>
+          <div class="stats-label">Other/Unspec.</div>
+        </div>
+      </div>
+    </div>
+
+    ${st.sitNearTotal > 0 || st.doNotTotal > 0 ? `
+    <div class="stats-section">
+      <h4>Constraints</h4>
+      ${st.sitNearTotal > 0 ? `
+      <div class="stats-constraint">
+        <span class="stats-constraint-label">✅ Sit-near satisfied</span>
+        <span class="stats-constraint-value">${st.sitNearSatisfied} / ${st.sitNearTotal}</span>
+        <div class="stats-constraint-bar">
+          <div class="stats-bar-fill stats-bar-success" style="width:${pct(st.sitNearSatisfied, st.sitNearTotal)}%"></div>
+        </div>
+      </div>` : ''}
+      ${st.doNotTotal > 0 ? `
+      <div class="stats-constraint">
+        <span class="stats-constraint-label">⚠️ Separation violations</span>
+        <span class="stats-constraint-value ${st.doNotViolations > 0 ? 'stats-danger' : ''}">${st.doNotViolations} / ${st.doNotTotal}</span>
+      </div>` : ''}
+    </div>` : ''}
+
+    ${st.clusterStats.length > 0 ? `
+    <div class="stats-section">
+      <h4>Clusters</h4>
+      ${st.clusterStats.map(cs => `
+      <div class="stats-cluster">
+        <span class="cluster-dot" style="background:${cs.colour}"></span>
+        <span class="stats-cluster-name">${cs.name}</span>
+        <span class="stats-cluster-count">${cs.count} students</span>
+        <span class="stats-cluster-gender">${cs.gender.male}M · ${cs.gender.female}F · ${cs.gender.other}O</span>
+      </div>`).join('')}
+    </div>` : ''}
+  `;
+
+  showModalEl('stats-modal');
+}
+
+/* ============================================================
+   ASSIGNMENT HISTORY
+============================================================ */
+function showHistoryModal() {
+  const room = currentRoom();
+  const body = document.getElementById('history-body');
+  body.innerHTML = '';
+
+  if (!room) {
+    body.innerHTML = '<p class="empty-msg">No room selected.</p>';
+    showModalEl('history-modal'); return;
+  }
+
+  const history = room.assignmentHistory || [];
+  if (!history.length) {
+    body.innerHTML = '<p class="empty-msg">No assignment history yet.<br>Use "▶ Assign" to generate a seating plan.</p>';
+    showModalEl('history-modal'); return;
+  }
+
+  history.forEach((snap, idx) => {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+    const date    = new Date(snap.ts).toLocaleString();
+    const count   = snap.seats.filter(s => s.studentId).length;
+    const mLabel  = document.createElement('span');
+    mLabel.className = 'history-date';
+    mLabel.textContent = date;
+    const mMethod = document.createElement('span');
+    mMethod.className = 'history-method';
+    mMethod.textContent = snap.method;
+    const mCount  = document.createElement('span');
+    mCount.className = 'history-count';
+    mCount.textContent = `${count} assigned`;
+    meta.appendChild(mLabel);
+    meta.appendChild(mMethod);
+    meta.appendChild(mCount);
+
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'btn btn-secondary btn-sm';
+    if (idx === 0) {
+      restoreBtn.textContent = '✔ Current';
+      restoreBtn.disabled = true;
+    } else {
+      restoreBtn.textContent = '↩ Restore';
+      restoreBtn.addEventListener('click', () => {
+        if (confirm('Restore this seating assignment? Current layout will be saved to undo history.')) {
+          pushHistory();
+          restoreAssignment(room, snap);
+          closeModal();
+          renderGrid();
+          renderStudentList();
+          scheduleAutosave();
+        }
+      });
+    }
+
+    item.appendChild(meta);
+    item.appendChild(restoreBtn);
+    body.appendChild(item);
+  });
+
+  showModalEl('history-modal');
+}
+
+function restoreAssignment(room, snapshot) {
+  const seatMap = {};
+  room.seats.forEach(s => { seatMap[s.id] = s; });
+  snapshot.seats.forEach(({ id, studentId }) => {
+    if (seatMap[id]) seatMap[id].studentId = studentId;
+  });
+}
+
+/* ============================================================
+   DARK MODE
+============================================================ */
+function toggleDarkMode() {
+  const isDark = document.body.classList.toggle('dark-mode');
+  localStorage.setItem('spg_dark_mode', isDark ? '1' : '0');
+  const btn = document.getElementById('dark-mode-btn');
+  if (btn) btn.textContent = isDark ? '☀️ Light' : '🌙 Dark';
+}
+
+function applyDarkModePreference() {
+  if (localStorage.getItem('spg_dark_mode') === '1') {
+    document.body.classList.add('dark-mode');
+    const btn = document.getElementById('dark-mode-btn');
+    if (btn) btn.textContent = '☀️ Light';
+  }
+}
+
+/* ============================================================
+   CAPACITY BADGE
+============================================================ */
+function updateCapacityBadge(room) {
+  const badge = document.getElementById('capacity-badge');
+  if (!badge) return;
+  if (!room) { badge.textContent = ''; return; }
+  const seats  = room.seats.filter(isSeatAssignable);
+  const filled = seats.filter(s => s.studentId).length;
+  const total  = seats.length;
+  badge.textContent = `${filled} / ${total} seats`;
+  badge.className = 'capacity-badge' + (total > 0 && filled === total ? ' full' : '');
+}
+
+/* ============================================================
+   SEAT TOOLTIP
+============================================================ */
+function showSeatTooltip(studentId, anchorEl) {
+  const student = studentById(studentId);
+  if (!student) return;
+  const tooltip = document.getElementById('seat-tooltip');
+  if (!tooltip) return;
+
+  const flags = (student.flags || []).map(key => {
+    const f = STUDENT_FLAGS.find(x => x.key === key);
+    return f ? `<span class="tt-flag" style="background:${f.colour}">${f.label}</span>` : '';
+  }).join('');
+
+  const detParts = [];
+  if (student.gender) detParts.push(student.gender.charAt(0).toUpperCase() + student.gender.slice(1));
+  if (student.marks != null) detParts.push(`${student.marks}%`);
+
+  tooltip.innerHTML =
+    `<div class="tt-name">${student.name}</div>` +
+    (detParts.length ? `<div class="tt-details">${detParts.join(' · ')}</div>` : '') +
+    (flags ? `<div class="tt-flags">${flags}</div>` : '') +
+    (student.notes ? `<div class="tt-notes">${student.notes}</div>` : '');
+
+  const rect = anchorEl.getBoundingClientRect();
+  const ttW  = 210;
+  let left = rect.right + 8;
+  let top  = rect.top;
+  if (left + ttW > window.innerWidth) left = rect.left - ttW - 8;
+  if (left < 8) left = 8;
+  tooltip.style.left    = left + 'px';
+  tooltip.style.top     = Math.max(8, top) + 'px';
+  tooltip.style.display = 'block';
+}
+
+function hideSeatTooltip() {
+  const tooltip = document.getElementById('seat-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
+}
+
+/* ============================================================
+   SEAT CONTEXT MENU
+============================================================ */
+let ctxMenuSeatId = null;
+let ctxMenuRoomId = null;
+
+function showSeatContextMenu(clientX, clientY, seat, room) {
+  ctxMenuSeatId = seat.id;
+  ctxMenuRoomId = room.id;
+  const menu = document.getElementById('seat-ctx-menu');
+  if (!menu) return;
+  menu.style.left    = clientX + 'px';
+  menu.style.top     = clientY + 'px';
+  menu.style.display = 'block';
+}
+
+function hideSeatContextMenu() {
+  const menu = document.getElementById('seat-ctx-menu');
+  if (menu) menu.style.display = 'none';
+  ctxMenuSeatId = null;
+  ctxMenuRoomId = null;
+}
+
+/* ============================================================
+   LABELED SEAT RENDERING HELPER
+============================================================ */
+function buildLabeledSeat(seat) {
+  const info = SEAT_LABELS[seat.label] || { icon: '📌', name: seat.label };
+  const wrap = document.createElement('div');
+  wrap.className = 'labeled-seat-content';
+  const icon = document.createElement('div');
+  icon.className = 'labeled-seat-icon';
+  icon.textContent = info.icon;
+  const txt = document.createElement('div');
+  txt.className = 'labeled-seat-name';
+  txt.textContent = info.name;
+  wrap.appendChild(icon);
+  wrap.appendChild(txt);
+  return wrap;
+}
 function renderTabs() {
   const el = document.getElementById('room-tabs');
   el.innerHTML = '';
@@ -778,7 +1306,12 @@ function renderStudentList() {
   const el = document.getElementById('student-list');
   el.innerHTML = '';
 
-  const shown = visibleStudents();
+  const query = (document.getElementById('student-search').value ?? '').toLowerCase().trim();
+  const visible = visibleStudents();
+  // Apply search filter on top of class-set filter
+  const shown = query
+    ? visible.filter(s => s.name.toLowerCase().includes(query))
+    : visible;
 
   if (!state.students.length) {
     el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 JSON" / "📥 CSV" to import.</div>';
@@ -786,7 +1319,10 @@ function renderStudentList() {
   }
 
   if (!shown.length) {
-    el.innerHTML = '<div class="empty-msg">No students in this class set.<br>Manage class sets using ⚙️.</div>';
+    const msg = query
+      ? 'No students match your search.'
+      : 'No students in this class set.<br>Manage class sets using ⚙️.';
+    el.innerHTML = `<div class="empty-msg">${msg}</div>`;
     return;
   }
 
@@ -840,6 +1376,23 @@ function buildStudentCard(student, isSeated) {
   info.appendChild(nameEl);
   info.appendChild(det);
 
+  // Flag pills
+  const flags = student.flags || [];
+  if (flags.length) {
+    const flagsRow = document.createElement('div');
+    flagsRow.className = 'student-flags';
+    flags.forEach(key => {
+      const def = STUDENT_FLAGS.find(f => f.key === key);
+      if (!def) return;
+      const pill = document.createElement('span');
+      pill.className = 'flag-pill';
+      pill.textContent = def.label;
+      pill.style.backgroundColor = def.colour;
+      flagsRow.appendChild(pill);
+    });
+    info.appendChild(flagsRow);
+  }
+
   // Actions
   const actions = document.createElement('div');
   actions.className = 's-actions';
@@ -885,12 +1438,14 @@ function renderGrid() {
     document.getElementById('room-name-display').textContent = 'No room selected';
     updateRoomControls(null);
     updateFrontLabel(null);
+    updateCapacityBadge(null);
     return;
   }
 
   document.getElementById('room-name-display').textContent = room.name;
   updateRoomControls(room);
   updateFrontLabel(room);
+  updateCapacityBadge(room);
 
   if (room.layoutMode === 'freeform') {
     renderFreeformGrid(room, grid);
@@ -973,6 +1528,7 @@ function renderRegularGrid(room, grid) {
 
         cell.addEventListener('click', () => {
           if (state.mode !== 'toggle') return;
+          pushHistory();
           if (!seat) {
             room.seats.push(makeSeat(room.id, r, c));
           } else {
@@ -993,6 +1549,21 @@ function renderRegularGrid(room, grid) {
       if (state.mode === 'toggle')  cell.classList.add('toggleable');
       if (state.mode === 'cluster') cell.classList.add('cluster-mode');
 
+      // Labeled seat (teacher desk, whiteboard, etc.)
+      if (seat.label) {
+        cell.classList.add('labeled-seat');
+        cell.appendChild(buildLabeledSeat(seat));
+        const lInfo = SEAT_LABELS[seat.label];
+        cell.addEventListener('mouseenter', () => showInfoBar(lInfo ? lInfo.name : seat.label));
+        cell.addEventListener('mouseleave', () => showInfoBar(''));
+        cell.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          showSeatContextMenu(e.clientX, e.clientY, seat, room);
+        });
+        grid.appendChild(cell);
+        continue;
+      }
+
       if (seat.studentId) {
         cell.classList.add('has-student');
         const student = studentById(seat.studentId);
@@ -1001,6 +1572,7 @@ function renderRegularGrid(room, grid) {
 
       cell.addEventListener('click', () => {
         if (state.mode === 'toggle') {
+          pushHistory();
           seat.enabled   = false;
           seat.studentId = null;
           seat.clusterId = null;
@@ -1011,13 +1583,25 @@ function renderRegularGrid(room, grid) {
         }
       });
 
+      cell.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        showSeatContextMenu(e.clientX, e.clientY, seat, room);
+      });
+
       if (state.mode === 'move') attachDropTarget(cell, seat.id);
 
       cell.addEventListener('mouseenter', () => {
-        if (seat.studentId) showStudentHover(seat.studentId);
-        else showInfoBar(`Seat row ${r + 1}, col ${c + 1} — empty`);
+        if (seat.studentId) {
+          showStudentHover(seat.studentId);
+          showSeatTooltip(seat.studentId, cell);
+        } else {
+          showInfoBar(`Seat row ${r + 1}, col ${c + 1} — empty`);
+        }
       });
-      cell.addEventListener('mouseleave', () => showInfoBar(''));
+      cell.addEventListener('mouseleave', () => {
+        showInfoBar('');
+        hideSeatTooltip();
+      });
 
       grid.appendChild(cell);
     }
@@ -1040,6 +1624,27 @@ function renderFreeformGrid(room, grid) {
 
     if (state.mode === 'cluster') cell.classList.add('cluster-mode');
 
+    // Labeled seat
+    if (seat.label) {
+      cell.classList.add('labeled-seat');
+      cell.appendChild(buildLabeledSeat(seat));
+      const lInfo = SEAT_LABELS[seat.label];
+      cell.addEventListener('mouseenter', () => showInfoBar(lInfo ? lInfo.name : seat.label));
+      cell.addEventListener('mouseleave', () => { if (state.mode !== 'layout') showInfoBar(''); });
+      if (state.mode !== 'layout') {
+        cell.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          showSeatContextMenu(e.clientX, e.clientY, seat, room);
+        });
+      }
+      if (state.mode === 'layout') {
+        cell.classList.add('layout-draggable');
+        attachFreeformDrag(cell, seat, room);
+      }
+      grid.appendChild(cell);
+      return;
+    }
+
     if (seat.studentId) {
       cell.classList.add('has-student');
       const student = studentById(seat.studentId);
@@ -1059,24 +1664,40 @@ function renderFreeformGrid(room, grid) {
       if (state.mode === 'cluster') handleClusterClick(seat, room);
     });
 
+    cell.addEventListener('contextmenu', e => {
+      if (state.mode === 'layout') return; // layout mode handles its own right-click
+      e.preventDefault();
+      showSeatContextMenu(e.clientX, e.clientY, seat, room);
+    });
+
     if (state.mode === 'move') attachDropTarget(cell, seat.id);
 
     cell.addEventListener('mouseenter', () => {
-      if (seat.studentId) showStudentHover(seat.studentId);
-      else showInfoBar(`Desk — empty`);
+      if (seat.studentId) {
+        showStudentHover(seat.studentId);
+        showSeatTooltip(seat.studentId, cell);
+      } else {
+        showInfoBar('Desk — empty');
+      }
     });
     cell.addEventListener('mouseleave', () => {
       if (state.mode !== 'layout') showInfoBar('');
+      hideSeatTooltip();
     });
 
     grid.appendChild(cell);
   });
 
-  // Click on empty canvas in layout mode → add a desk
+  // Left-click on empty canvas in layout mode → add a desk
   if (state.mode === 'layout') {
     grid.classList.add('layout-canvas');
+
+    // Prevent the browser context menu appearing over the canvas
+    grid.addEventListener('contextmenu', e => e.preventDefault());
+
     grid.addEventListener('pointerdown', e => {
       if (e.target !== grid) return;
+      if (e.button !== 0) return; // left button only — ignore right-click
       e.preventDefault();
       const rect = grid.getBoundingClientRect();
       const x = Math.round(Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF)));
@@ -1117,6 +1738,7 @@ function attachFreeformDrag(cell, seat, room) {
       cell.removeEventListener('pointerup',   onUp);
       cell.classList.remove('dragging');
       if (moved) {
+        pushHistory();
         seat.x = Math.round(seat.x);
         seat.y = Math.round(seat.y);
         scheduleAutosave();
@@ -1163,6 +1785,7 @@ function handleClusterClick(seat, room) {
     showInfoBar('Select a cluster in the right panel first, or create one.');
     return;
   }
+  pushHistory();
   seat.clusterId = (seat.clusterId === state.activeClusterId) ? null : state.activeClusterId;
   scheduleAutosave();
   renderGrid();
@@ -1189,6 +1812,7 @@ function showStudentHover(studentId) {
   const parts = [s.name];
   if (s.gender) parts.push(s.gender);
   if (s.marks != null) parts.push(`Marks: ${s.marks}%`);
+  if ((s.flags || []).length) parts.push(s.flags.join(', '));
   if (s.sitNear.length)
     parts.push(`Sit near: ${s.sitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
   if (s.doNotSitNear.length)
@@ -1231,6 +1855,24 @@ function buildMiniStudent(student, seatId) {
 
   wrap.appendChild(av);
   wrap.appendChild(nameEl);
+
+  // Flag dots
+  const flags = student.flags || [];
+  if (flags.length) {
+    const flagsRow = document.createElement('div');
+    flagsRow.className = 'mini-flags';
+    flags.forEach(key => {
+      const def = STUDENT_FLAGS.find(f => f.key === key);
+      if (!def) return;
+      const dot = document.createElement('span');
+      dot.className = 'mini-flag-dot';
+      dot.style.backgroundColor = def.colour;
+      dot.title = def.label;
+      flagsRow.appendChild(dot);
+    });
+    wrap.appendChild(flagsRow);
+  }
+
   return wrap;
 }
 
@@ -1360,6 +2002,27 @@ function openModal(type, id = null) {
     document.getElementById('s-name').value   = s?.name   ?? '';
     document.getElementById('s-gender').value = s?.gender ?? '';
     document.getElementById('s-marks').value  = s?.marks  != null ? s.marks : '';
+    document.getElementById('s-notes').value  = s?.notes  ?? '';
+
+    // Flags checkboxes
+    const flagsDiv = document.getElementById('flag-checkboxes');
+    flagsDiv.innerHTML = '';
+    STUDENT_FLAGS.forEach(f => {
+      const label = document.createElement('label');
+      label.className = 'flag-chk-label';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = f.key;
+      cb.name  = 'student-flag';
+      cb.checked = s ? (s.flags || []).includes(f.key) : false;
+      const dot = document.createElement('span');
+      dot.className = 'flag-dot';
+      dot.style.backgroundColor = f.colour;
+      label.appendChild(cb);
+      label.appendChild(dot);
+      label.appendChild(document.createTextNode(' ' + f.label));
+      flagsDiv.appendChild(label);
+    });
 
     // Photo preview
     const preview = document.getElementById('photo-preview');
@@ -1468,12 +2131,19 @@ function saveStudentModal() {
   const doNotSitNear = [...document.querySelectorAll('#no-sit-near-list input[name="no-sit-near"]:checked')]
     .map(cb => cb.value);
 
+  const flags = [...document.querySelectorAll('#flag-checkboxes input[name="student-flag"]:checked')]
+    .map(cb => cb.value);
+
+  const notes = document.getElementById('s-notes').value.trim();
+
   const persist = (photo) => {
     const data = {
       name,
       gender: document.getElementById('s-gender').value,
       marks,
       photo,
+      notes,
+      flags,
       sitNear,
       doNotSitNear
     };
@@ -1643,6 +2313,8 @@ function setMode(mode) {
 function initEvents() {
 
   // ── Save / Load ──────────────────────────────────────────
+  document.getElementById('print-btn').addEventListener('click', printSeatingPlan);
+
   document.getElementById('save-btn').addEventListener('click', saveJSON);
 
   document.getElementById('load-btn').addEventListener('click', () =>
@@ -1709,6 +2381,15 @@ function initEvents() {
     }
   });
 
+  document.getElementById('duplicate-room-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    const copy = roomDuplicate(room);
+    state.currentRoomId = copy.id;
+    renderAll();
+    scheduleAutosave();
+  });
+
   // ── Front direction buttons ───────────────────────────────
   document.querySelectorAll('.dir-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1765,6 +2446,7 @@ function initEvents() {
   // ── Assign / Clear ───────────────────────────────────────
   document.getElementById('assign-btn').addEventListener('click', () => {
     const method = document.getElementById('sort-method').value;
+    pushHistory();
     assignStudents(method);
     renderGrid();
     renderStudentList();
@@ -1775,6 +2457,7 @@ function initEvents() {
     const room = currentRoom();
     if (!room) return;
     if (confirm('Clear all student assignments in this room?')) {
+      pushHistory();
       room.seats.forEach(s => { s.studentId = null; });
       renderGrid();
       renderStudentList();
@@ -1829,6 +2512,11 @@ function initEvents() {
   // ── Class set selector ───────────────────────────────────
   document.getElementById('class-set-select').addEventListener('change', e => {
     state.activeClassSetId = e.target.value || null;
+    renderStudentList();
+  });
+
+  // ── Student search ───────────────────────────────────────
+  document.getElementById('student-search').addEventListener('input', () => {
     renderStudentList();
   });
 
@@ -1921,13 +2609,90 @@ function initEvents() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeModal();
   });
+
+  // ── Undo / Redo ──────────────────────────────────────────
+  document.getElementById('undo-btn').addEventListener('click', undo);
+  document.getElementById('redo-btn').addEventListener('click', redo);
+
+  // ── Stats / History ──────────────────────────────────────
+  document.getElementById('stats-btn').addEventListener('click', showStatsModal);
+  document.getElementById('history-btn').addEventListener('click', showHistoryModal);
+
+  // ── Dark mode ────────────────────────────────────────────
+  document.getElementById('dark-mode-btn').addEventListener('click', toggleDarkMode);
+
+  // ── CSV Export ───────────────────────────────────────────
+  document.getElementById('export-csv-btn').addEventListener('click', exportCSV);
+
+  // ── Seat context menu ────────────────────────────────────
+  document.querySelectorAll('.seat-ctx-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const room = state.rooms.find(r => r.id === ctxMenuRoomId);
+      const seat = room?.seats.find(s => s.id === ctxMenuSeatId);
+      if (seat) {
+        pushHistory();
+        const newLabel = btn.dataset.label || null;
+        seat.label = newLabel;
+        if (seat.label && seat.studentId) seat.studentId = null;
+        renderGrid();
+        renderStudentList();
+        scheduleAutosave();
+      }
+      hideSeatContextMenu();
+    });
+  });
+
+  // Hide seat context menu on any outside click
+  document.addEventListener('click', e => {
+    const menu = document.getElementById('seat-ctx-menu');
+    if (menu && !menu.contains(e.target)) hideSeatContextMenu();
+  });
+
+  // ── Global keyboard shortcuts ────────────────────────────
+  document.addEventListener('keydown', e => {
+    // Undo / Redo (work even inside inputs)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) {
+      e.preventDefault(); redo(); return;
+    }
+
+    const inInput  = ['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName);
+    const modalOpen = document.getElementById('modal-overlay').classList.contains('open');
+    if (inInput || modalOpen) return;
+
+    // A = Assign
+    if (e.key === 'a' || e.key === 'A') {
+      e.preventDefault();
+      const method = document.getElementById('sort-method').value;
+      pushHistory();
+      assignStudents(method);
+      renderGrid(); renderStudentList(); scheduleAutosave();
+    }
+    // C = Clear (only if Ctrl not held, to avoid blocking Ctrl+C)
+    if ((e.key === 'c' || e.key === 'C') && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      const room = currentRoom();
+      if (room && confirm('Clear all student assignments in this room?')) {
+        pushHistory();
+        room.seats.forEach(s => { s.studentId = null; });
+        renderGrid(); renderStudentList(); scheduleAutosave();
+      }
+    }
+    // 1-4 = switch mode
+    if (e.key === '1') setMode('move');
+    if (e.key === '2') setMode('toggle');
+    if (e.key === '3') setMode('cluster');
+    if (e.key === '4') setMode('layout');
+  });
 }
 
 /* ============================================================
    INITIALISATION
 ============================================================ */
 function init() {
+  applyDarkModePreference();
   initEvents();
+  updateUndoRedoBtns();
 
   // Try to restore from localStorage; fall back to a default room
   const restored = loadFromStorage();

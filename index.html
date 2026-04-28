@@ -16,6 +16,9 @@
     <span class="autosave-badge" id="autosave-badge"></span>
   </div>
   <div class="header-right">
+    <button class="btn btn-secondary btn-sm" id="dark-mode-btn" title="Toggle dark mode">🌙 Dark</button>
+    <button class="btn btn-secondary btn-sm" id="export-csv-btn" title="Export current seating as CSV">📊 CSV</button>
+    <button class="btn btn-secondary" id="print-btn">🖨 Print</button>
     <button class="btn btn-secondary" id="save-btn">💾 Save JSON</button>
     <button class="btn btn-secondary" id="load-btn">📂 Load JSON</button>
     <input type="file" id="load-file" accept=".json" style="display:none" />
@@ -48,6 +51,12 @@
     <button class="btn btn-primary"  id="assign-btn">▶ Assign</button>
     <button class="btn btn-danger"   id="clear-btn">✕ Clear</button>
   </div>
+  <div class="toolbar-group">
+    <button class="btn btn-secondary btn-sm" id="undo-btn" title="Undo (Ctrl+Z)" disabled>↩ Undo</button>
+    <button class="btn btn-secondary btn-sm" id="redo-btn" title="Redo (Ctrl+Y)" disabled>↪ Redo</button>
+    <button class="btn btn-secondary btn-sm" id="stats-btn" title="Show assignment statistics">📊 Stats</button>
+    <button class="btn btn-secondary btn-sm" id="history-btn" title="Show assignment history">🕐 History</button>
+  </div>
   <div class="toolbar-group" id="cluster-toolbar" style="display:none">
     <span class="toolbar-label">Cluster:</span>
     <select id="active-cluster-select">
@@ -79,13 +88,19 @@
         <input type="file" id="import-csv-file" accept=".csv" style="display:none" />
       </div>
     </div>
+    <div class="student-search-bar">
+      <input type="text" id="student-search" placeholder="🔍 Search students…" autocomplete="off" />
+    </div>
     <div class="student-list" id="student-list"></div>
   </aside>
 
   <!-- CENTRE: room grid -->
   <main class="panel panel-centre">
     <div class="room-header" id="room-header">
-      <h2 id="room-name-display">No room selected</h2>
+      <div class="room-name-row">
+        <h2 id="room-name-display">No room selected</h2>
+        <span class="capacity-badge" id="capacity-badge"></span>
+      </div>
     <div class="room-config">
         <!-- Grid size — hidden in freeform mode -->
         <div id="grid-size-group" class="room-config-group">
@@ -105,6 +120,7 @@
         <button class="btn btn-sm dir-btn"         data-dir="bottom" title="Front of class at bottom">↓</button>
         <button class="btn btn-sm dir-btn"         data-dir="left"   title="Front of class at left"  >←</button>
         <button class="btn btn-secondary btn-sm" id="layout-toggle-btn">⊞ Freeform</button>
+        <button class="btn btn-secondary  btn-sm" id="duplicate-room-btn">⧉ Duplicate</button>
         <button class="btn btn-warning    btn-sm" id="archive-room-btn">📦 Archive</button>
         <button class="btn btn-danger    btn-sm" id="delete-room-btn">🗑 Delete Room</button>
       </div>
@@ -129,6 +145,19 @@
   </aside>
 
 </div><!-- /.app-body -->
+
+<!-- ── SEAT CONTEXT MENU ──────────────────────────────── -->
+<div id="seat-ctx-menu" class="seat-ctx-menu" style="display:none">
+  <div class="seat-ctx-title">Label this seat as:</div>
+  <button class="seat-ctx-item" data-label="">🪑 Student Desk (default)</button>
+  <button class="seat-ctx-item" data-label="teacher">👨‍🏫 Teacher's Desk</button>
+  <button class="seat-ctx-item" data-label="whiteboard">📋 Whiteboard</button>
+  <button class="seat-ctx-item" data-label="bookshelf">📚 Bookshelf</button>
+  <button class="seat-ctx-item" data-label="projector">📽 Projector</button>
+</div>
+
+<!-- ── SEAT TOOLTIP ──────────────────────────────────── -->
+<div id="seat-tooltip" class="seat-tooltip" style="display:none"></div>
 
 <!-- ══════════════════════════════════════════════════════
      MODALS
@@ -178,6 +207,14 @@
           <div class="form-group">
             <label for="s-marks">Marks / Ability (0–100)</label>
             <input type="number" id="s-marks" min="0" max="100" placeholder="e.g. 75" />
+          </div>
+          <div class="form-group">
+            <label for="s-notes">Notes</label>
+            <textarea id="s-notes" rows="2" placeholder="e.g. Needs front row, hearing impairment…" style="width:100%;resize:vertical;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--text);background:var(--surface);font-family:inherit"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Flags</label>
+            <div class="flag-checkboxes" id="flag-checkboxes"></div>
           </div>
           <div class="form-group">
             <label>Photo</label>
@@ -269,6 +306,29 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" data-close="classset-modal">Close</button>
+    </div>
+  </div>
+  <!-- STATS MODAL -->
+  <div class="modal modal-wide" id="stats-modal">
+    <div class="modal-header">
+      <h3>Assignment Statistics</h3>
+      <button class="modal-close" data-close="stats-modal">✕</button>
+    </div>
+    <div class="modal-body" id="stats-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="stats-modal">Close</button>
+    </div>
+  </div>
+
+  <!-- HISTORY MODAL -->
+  <div class="modal modal-wide" id="history-modal">
+    <div class="modal-header">
+      <h3>Assignment History</h3>
+      <button class="modal-close" data-close="history-modal">✕</button>
+    </div>
+    <div class="modal-body" id="history-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="history-modal">Close</button>
     </div>
   </div>
 
