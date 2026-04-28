@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seating Plan Generator</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<!-- ── HEADER ──────────────────────────────────────────── -->
+<header>
+  <div class="header-left">
+    <span class="logo">🎓</span>
+    <h1>Seating Plan Generator</h1>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-secondary" id="save-btn">💾 Save JSON</button>
+    <button class="btn btn-secondary" id="load-btn">📂 Load JSON</button>
+    <input type="file" id="load-file" accept=".json" style="display:none" />
+  </div>
+</header>
+
+<!-- ── ROOM TABS ────────────────────────────────────────── -->
+<div class="room-bar">
+  <div class="room-tabs" id="room-tabs"></div>
+  <button class="btn btn-primary btn-sm" id="add-room-btn">＋ New Room</button>
+</div>
+
+<!-- ── TOOLBAR ──────────────────────────────────────────── -->
+<div class="toolbar" id="toolbar">
+  <div class="toolbar-group">
+    <span class="toolbar-label">Mode:</span>
+    <button class="btn mode-btn active" data-mode="move"    id="mode-move">↕ Move</button>
+    <button class="btn mode-btn"        data-mode="toggle"  id="mode-toggle">⬜ Edit Seats</button>
+    <button class="btn mode-btn"        data-mode="cluster" id="mode-cluster">🔲 Edit Clusters</button>
+  </div>
+  <div class="toolbar-group">
+    <span class="toolbar-label">Assign:</span>
+    <select id="sort-method">
+      <option value="random">Random</option>
+      <option value="ability">By Ability (Marks)</option>
+      <option value="gender">By Gender</option>
+    </select>
+    <button class="btn btn-primary"  id="assign-btn">▶ Assign</button>
+    <button class="btn btn-danger"   id="clear-btn">✕ Clear</button>
+  </div>
+  <div class="toolbar-group" id="cluster-toolbar" style="display:none">
+    <span class="toolbar-label">Cluster:</span>
+    <select id="active-cluster-select">
+      <option value="">── Select cluster ──</option>
+    </select>
+    <button class="btn btn-secondary btn-sm" id="detect-clusters-btn">🔍 Auto-Detect</button>
+  </div>
+</div>
+
+<!-- ── MAIN BODY ────────────────────────────────────────── -->
+<div class="app-body">
+
+  <!-- LEFT: student roster -->
+  <aside class="panel panel-left">
+    <div class="panel-header">
+      <h2>Students</h2>
+      <div class="panel-actions">
+        <button class="btn btn-primary  btn-sm" id="add-student-btn">＋ Add</button>
+        <button class="btn btn-secondary btn-sm" id="import-btn">📥 Import</button>
+        <input type="file" id="import-file" accept=".json" style="display:none" />
+      </div>
+    </div>
+    <div class="student-list" id="student-list"></div>
+  </aside>
+
+  <!-- CENTRE: room grid -->
+  <main class="panel panel-centre">
+    <div class="room-header" id="room-header">
+      <h2 id="room-name-display">No room selected</h2>
+      <div class="room-config">
+        <label>Rows:<input type="number" id="rows-input" value="5" min="1" max="30" /></label>
+        <label>Cols:<input type="number" id="cols-input" value="6" min="1" max="30" /></label>
+        <button class="btn btn-secondary btn-sm" id="resize-btn">↔ Resize</button>
+        <button class="btn btn-danger    btn-sm" id="delete-room-btn">🗑 Delete Room</button>
+      </div>
+    </div>
+    <div class="grid-scroll">
+      <div class="grid-wrapper" id="grid-wrapper">
+        <div class="front-label">▲ FRONT OF CLASS</div>
+        <div class="room-grid" id="room-grid"></div>
+      </div>
+    </div>
+    <div id="seat-info-bar" class="seat-info-bar"></div>
+  </main>
+
+  <!-- RIGHT: clusters -->
+  <aside class="panel panel-right">
+    <div class="panel-header">
+      <h2>Clusters / Groups</h2>
+      <button class="btn btn-primary btn-sm" id="add-cluster-btn">＋ Add</button>
+    </div>
+    <div class="cluster-list" id="cluster-list"></div>
+    <div class="cluster-legend" id="cluster-legend"></div>
+  </aside>
+
+</div><!-- /.app-body -->
+
+<!-- ══════════════════════════════════════════════════════
+     MODALS
+══════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-overlay">
+
+  <!-- ROOM MODAL -->
+  <div class="modal" id="room-modal">
+    <div class="modal-header">
+      <h3 id="room-modal-title">New Room</h3>
+      <button class="modal-close" data-close="room-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="room-name-input">Room name</label>
+        <input type="text" id="room-name-input" placeholder="e.g. Classroom A" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary"   id="room-modal-save">Save</button>
+      <button class="btn btn-secondary" data-close="room-modal">Cancel</button>
+    </div>
+  </div>
+
+  <!-- STUDENT MODAL -->
+  <div class="modal modal-wide" id="student-modal">
+    <div class="modal-header">
+      <h3 id="student-modal-title">Add Student</h3>
+      <button class="modal-close" data-close="student-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-col">
+          <div class="form-group">
+            <label for="s-name">Full name *</label>
+            <input type="text" id="s-name" placeholder="e.g. Alice Smith" />
+          </div>
+          <div class="form-group">
+            <label for="s-gender">Gender</label>
+            <select id="s-gender">
+              <option value="">Not specified</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="s-marks">Marks / Ability (0–100)</label>
+            <input type="number" id="s-marks" min="0" max="100" placeholder="e.g. 75" />
+          </div>
+          <div class="form-group">
+            <label>Photo</label>
+            <div class="photo-upload-row">
+              <div id="photo-preview" class="photo-preview-box">?</div>
+              <label class="btn btn-secondary btn-sm photo-file-label">
+                Choose photo
+                <input type="file" id="s-photo" accept="image/*" style="display:none" />
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="form-col">
+          <div class="form-group">
+            <label>Sit near</label>
+            <div id="sit-near-list" class="constraint-list"></div>
+          </div>
+          <div class="form-group">
+            <label>Do <em>not</em> sit near</label>
+            <div id="no-sit-near-list" class="constraint-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary"   id="student-modal-save">Save</button>
+      <button class="btn btn-secondary" data-close="student-modal">Cancel</button>
+    </div>
+  </div>
+
+  <!-- CLUSTER MODAL -->
+  <div class="modal" id="cluster-modal">
+    <div class="modal-header">
+      <h3 id="cluster-modal-title">New Cluster</h3>
+      <button class="modal-close" data-close="cluster-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="cluster-name-input">Cluster name</label>
+        <input type="text" id="cluster-name-input" placeholder="e.g. Group A" />
+      </div>
+      <div class="form-group">
+        <label for="cluster-colour-input">Colour</label>
+        <input type="color" id="cluster-colour-input" value="#3498db" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary"   id="cluster-modal-save">Save</button>
+      <button class="btn btn-secondary" data-close="cluster-modal">Cancel</button>
+    </div>
+  </div>
+
+</div><!-- /#modal-overlay -->
+
+<script src="js/app.js"></script>
+</body>
+</html>
