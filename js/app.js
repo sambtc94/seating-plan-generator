@@ -9,8 +9,11 @@ const CLUSTER_COLOURS = [
   '#795548','#607d8b'
 ];
 
-const CELL_SIZE   = 84;  // 78px seat + 6px gap — used for grid↔freeform conversion
-const FREEFORM_PAD = 40; // padding inside the freeform canvas
+const CELL_SIZE              = 84;  // 78px seat + 6px gap — used for grid↔freeform conversion
+const FREEFORM_PAD           = 40;  // padding inside the freeform canvas
+const SEAT_WIDTH             = 78;  // seat cell width/height in px
+const SEAT_HALF              = 39;  // half of SEAT_WIDTH (for centring click position)
+const FREEFORM_ADJACENCY_PX  = 170; // pixel proximity for cluster auto-detect in freeform mode
 
 /* ============================================================
    STATE
@@ -54,7 +57,7 @@ function shuffle(arr) {
  *  Uses pixel x/y for freeform seats, row/col for grid seats.
  *  Returns a grid-unit equivalent (grid seats: 1 unit = one cell). */
 function seatDist(s1, s2) {
-  if (s1.x != null && s2.x != null) {
+  if (s1.x !== null && s1.x !== undefined && s2.x !== null && s2.x !== undefined) {
     const dx = s1.x - s2.x, dy = s1.y - s2.y;
     return Math.sqrt(dx * dx + dy * dy) / CELL_SIZE;
   }
@@ -298,8 +301,6 @@ function autoDetectClusters(room) {
   room.clusters = [];
   room.seats.forEach(s => { s.clusterId = null; });
   if (state.activeClusterId) state.activeClusterId = null;
-
-  const FREEFORM_ADJACENCY_PX = 170; // ~2 seat widths
 
   const enabled = room.seats.filter(s => s.enabled);
   const visited = new Set();
@@ -683,7 +684,7 @@ function parseCSVRows(csvText) {
           field += csvText[i++];
         }
       }
-      row.push(field.trim());
+      row.push(field); // quoted fields: preserve content as-is (no trim)
       // Skip comma or newline after closing quote
       if (csvText[i] === ',') i++;
     } else if (csvText[i] === ',') {
@@ -1078,8 +1079,8 @@ function renderFreeformGrid(room, grid) {
       if (e.target !== grid) return;
       e.preventDefault();
       const rect = grid.getBoundingClientRect();
-      const x = Math.round(Math.max(0, Math.min(room.canvasW - 78, e.clientX - rect.left - 39)));
-      const y = Math.round(Math.max(0, Math.min(room.canvasH - 78, e.clientY - rect.top  - 39)));
+      const x = Math.round(Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF)));
+      const y = Math.round(Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, e.clientY - rect.top  - SEAT_HALF)));
       room.seats.push(makeFreeformSeat(room.id, x, y));
       scheduleAutosave();
       renderGrid();
@@ -1105,8 +1106,8 @@ function attachFreeformDrag(cell, seat, room) {
       const dy = ev.clientY - startClientY;
       if (!moved && Math.hypot(dx, dy) < 4) return;
       moved = true;
-      seat.x = Math.max(0, Math.min(room.canvasW - 78, origX + dx));
-      seat.y = Math.max(0, Math.min(room.canvasH - 78, origY + dy));
+      seat.x = Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, origX + dx));
+      seat.y = Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, origY + dy));
       cell.style.left = seat.x + 'px';
       cell.style.top  = seat.y + 'px';
     };
