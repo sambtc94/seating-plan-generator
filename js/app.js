@@ -408,7 +408,9 @@ function resetDrag() {
    SAVE / LOAD
 ============================================================ */
 
-const AUTOSAVE_KEY = 'spg_autosave_v2';
+const AUTOSAVE_KEY          = 'spg_autosave_v2';
+const AUTOSAVE_DELAY_MS     = 600;
+const BADGE_FADE_DURATION_MS = 2500;
 
 function autosave() {
   try {
@@ -429,7 +431,7 @@ function autosave() {
 let _autosaveTimer = null;
 function scheduleAutosave() {
   clearTimeout(_autosaveTimer);
-  _autosaveTimer = setTimeout(autosave, 600);
+  _autosaveTimer = setTimeout(autosave, AUTOSAVE_DELAY_MS);
 }
 
 function showAutosaveBadge(text) {
@@ -438,7 +440,7 @@ function showAutosaveBadge(text) {
   badge.textContent = text;
   badge.classList.add('visible');
   clearTimeout(badge._fadeTimer);
-  badge._fadeTimer = setTimeout(() => badge.classList.remove('visible'), 2500);
+  badge._fadeTimer = setTimeout(() => badge.classList.remove('visible'), BADGE_FADE_DURATION_MS);
 }
 
 function loadFromStorage() {
@@ -535,14 +537,15 @@ function importStudents(arr) {
 /**
  * Import students from a CSV string.
  * Expected header row: name[,gender[,marks]]
+ * Supports RFC 4180-style quoted fields (commas inside quotes are preserved).
  * Extra columns are ignored.
  */
 function importStudentsCSV(csvText) {
-  const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  if (lines.length < 2) throw new Error('CSV must have a header row and at least one data row.');
+  const rows = parseCSVRows(csvText);
+  if (rows.length < 2) throw new Error('CSV must have a header row and at least one data row.');
 
-  // Parse header to find column indices (case-insensitive)
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  // Find column indices (case-insensitive, strip surrounding quotes)
+  const headers = rows[0].map(h => h.toLowerCase());
   const col = name => headers.indexOf(name);
   const iName   = col('name');
   const iGender = col('gender');
@@ -551,19 +554,70 @@ function importStudentsCSV(csvText) {
   if (iName === -1) throw new Error('CSV must have a "name" column.');
 
   let imported = 0;
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(',').map(c => c.trim());
+  for (let i = 1; i < rows.length; i++) {
+    const cells = rows[i];
     const name = cells[iName];
     if (!name) continue;
+    const marksRaw = iMarks !== -1 ? parseFloat(cells[iMarks]) : NaN;
     studentCreate({
       name,
-      gender: iGender !== -1 ? cells[iGender] ?? '' : '',
-      marks:  iMarks  !== -1 && cells[iMarks] !== '' ? parseFloat(cells[iMarks]) : null
+      gender: iGender !== -1 ? (cells[iGender] || '') : '',
+      marks:  !isNaN(marksRaw) ? marksRaw : null
     });
     imported++;
   }
   if (!imported) throw new Error('No valid student rows found in CSV.');
   return imported;
+}
+
+/**
+ * Parse a CSV string into a 2-D array of strings.
+ * Handles RFC 4180-style double-quoted fields (including commas and newlines inside quotes).
+ */
+function parseCSVRows(csvText) {
+  const rows = [];
+  let row = [];
+  let i = 0;
+  const len = csvText.length;
+
+  while (i < len) {
+    if (csvText[i] === '"') {
+      // Quoted field
+      let field = '';
+      i++; // skip opening quote
+      while (i < len) {
+        if (csvText[i] === '"' && csvText[i + 1] === '"') {
+          field += '"'; i += 2; // escaped quote
+        } else if (csvText[i] === '"') {
+          i++; break; // closing quote
+        } else {
+          field += csvText[i++];
+        }
+      }
+      row.push(field.trim());
+      // Skip comma or newline after closing quote
+      if (csvText[i] === ',') i++;
+    } else if (csvText[i] === ',') {
+      row.push('');
+      i++;
+    } else if (csvText[i] === '\r' || csvText[i] === '\n') {
+      // End of row
+      if (csvText[i] === '\r' && csvText[i + 1] === '\n') i++;
+      i++;
+      if (row.length) rows.push(row);
+      row = [];
+    } else {
+      // Unquoted field
+      let field = '';
+      while (i < len && csvText[i] !== ',' && csvText[i] !== '\r' && csvText[i] !== '\n') {
+        field += csvText[i++];
+      }
+      row.push(field.trim());
+      if (csvText[i] === ',') i++;
+    }
+  }
+  if (row.length) rows.push(row);
+  return rows.filter(r => r.some(c => c !== ''));
 }
 
 /* ============================================================
