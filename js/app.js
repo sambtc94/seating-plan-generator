@@ -829,7 +829,7 @@ function renderStudentList() {
   const el = document.getElementById('student-list');
   el.innerHTML = '';
 
-  const query = (document.getElementById('student-search')?.value ?? '').toLowerCase().trim();
+  const query = (document.getElementById('student-search').value ?? '').toLowerCase().trim();
   const visible = visibleStudents();
   // Apply search filter on top of class-set filter
   const shown = query
