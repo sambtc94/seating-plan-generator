@@ -214,6 +214,19 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
   width: 52px; padding: 3px 6px;
   border: 1px solid var(--border); border-radius: 5px; font-size: 12px;
 }
+.room-config-group { display: flex; align-items: center; gap: 6px; }
+.room-config-sep   { font-size: 11px; color: var(--text-muted); font-weight: 500; white-space: nowrap; }
+
+/* ── Direction buttons ── */
+.dir-btn {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border);
+  padding: 3px 8px; min-width: 28px;
+  font-size: 13px; border-radius: 5px;
+  cursor: pointer; transition: all .12s;
+}
+.dir-btn:hover  { background: var(--border); }
+.dir-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 /* ============================================================
    GRID
@@ -225,13 +238,45 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 
 .grid-wrapper { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 
+/* ── Front of class direction variants ── */
+#grid-wrapper[data-front-dir="top"]    { flex-direction: column; }
+#grid-wrapper[data-front-dir="bottom"] { flex-direction: column-reverse; }
+#grid-wrapper[data-front-dir="left"]   { flex-direction: row; }
+#grid-wrapper[data-front-dir="right"]  { flex-direction: row-reverse; }
+
+/* Vertical label for left/right directions */
+#grid-wrapper[data-front-dir="left"] .front-label,
+#grid-wrapper[data-front-dir="right"] .front-label {
+  writing-mode: vertical-rl;
+  padding: 18px 4px;
+  letter-spacing: 2px;
+}
+#grid-wrapper[data-front-dir="left"] .front-label {
+  transform: rotate(180deg);
+}
+
 .front-label {
   background: #2d3436; color: #fff;
   padding: 3px 22px; border-radius: 4px;
   font-size: 11px; letter-spacing: 1.5px; font-weight: 600;
+  white-space: nowrap;
 }
 
 .room-grid { display: grid; gap: 6px; }
+
+/* ── Freeform canvas ── */
+.room-grid.freeform {
+  display: block;
+  position: relative;
+  background-color: #f0f2f5;
+  background-image: radial-gradient(circle, #b2bec3 1px, transparent 1px);
+  background-size: 42px 42px;
+  border: 1px dashed #b2bec3;
+  border-radius: 8px;
+  overflow: visible;
+  flex-shrink: 0;
+}
+.room-grid.layout-canvas { cursor: crosshair; }
 
 .no-room-msg {
   color: var(--text-muted); font-style: italic; padding: 60px 20px; text-align: center;
@@ -264,6 +309,26 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 .seat-cell.in-cluster   { border-width: 3px; }
 
 .seat-cell.drag-over { border-color: var(--primary) !important; background: #e3f2fd !important; transform: scale(1.04); }
+
+/* ── Freeform absolute seat ── */
+.seat-cell.freeform-seat {
+  position: absolute;
+}
+/* In layout mode: desks show a move cursor */
+.seat-cell.layout-draggable {
+  cursor: move;
+  touch-action: none;
+}
+.seat-cell.layout-draggable:hover {
+  border-color: #6c5ce7;
+  background: #f3f0ff;
+  box-shadow: 0 2px 12px rgba(108,92,231,.3);
+}
+.seat-cell.dragging {
+  opacity: .8;
+  box-shadow: 0 8px 24px rgba(0,0,0,.2);
+  z-index: 100;
+}
 
 /* ── MINI STUDENT (inside seat) ── */
 .mini-student {
@@ -426,4 +491,78 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 ============================================================ */
 @media (max-width: 860px) {
   .panel-left, .panel-right { display: none; }
+}
+
+/* ============================================================
+   AUTOSAVE BADGE
+============================================================ */
+.autosave-badge {
+  font-size: 11px; color: #81ecec; opacity: 0;
+  transition: opacity .3s;
+  margin-left: 6px;
+}
+.autosave-badge.visible { opacity: 1; }
+
+/* ============================================================
+   ROOM TABS — ARCHIVED
+============================================================ */
+.archived-tab {
+  opacity: .6;
+  font-style: italic;
+}
+.archived-tab.active { opacity: 1; }
+
+.toggle-archived-btn { flex-shrink: 0; }
+.active-archived { background: var(--primary) !important; }
+
+/* ============================================================
+   BUTTON — WARNING
+============================================================ */
+.btn-warning { background: #e17055; color: #fff; }
+
+/* ============================================================
+   CLASS SET BAR
+============================================================ */
+.class-set-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #f8f9fa;
+  flex-shrink: 0;
+}
+.class-set-bar select {
+  flex: 1; padding: 4px 7px;
+  border: 1px solid var(--border); border-radius: 5px;
+  font-size: 12px; background: var(--surface); color: var(--text);
+  cursor: pointer;
+}
+.class-set-bar select:focus { outline: none; border-color: var(--primary); }
+
+/* ============================================================
+   CLASS SET MODAL
+============================================================ */
+.classset-layout {
+  display: flex; gap: 14px; min-height: 320px;
+}
+.classset-list-col {
+  width: 180px; flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.classset-list-header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.classset-list {
+  flex: 1; border: 1px solid var(--border); border-radius: 6px;
+  overflow-y: auto; min-height: 80px;
+}
+.classset-list-item {
+  padding: 8px 10px; font-size: 13px; cursor: pointer;
+  border-bottom: 1px solid var(--border); transition: background .12s;
+}
+.classset-list-item:last-child { border-bottom: none; }
+.classset-list-item:hover { background: var(--bg); }
+.classset-list-item.active { background: var(--primary); color: #fff; }
+
+.classset-edit-col {
+  flex: 1; display: flex; flex-direction: column; min-width: 0;
 }

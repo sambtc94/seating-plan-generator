@@ -9,23 +9,33 @@ const CLUSTER_COLOURS = [
   '#795548','#607d8b'
 ];
 
+const CELL_SIZE              = 84;  // 78px seat + 6px gap — used for grid↔freeform conversion
+const FREEFORM_PAD           = 40;  // padding inside the freeform canvas
+const SEAT_WIDTH             = 78;  // seat cell width/height in px
+const SEAT_HALF              = 39;  // half of SEAT_WIDTH (for centring click position)
+const FREEFORM_ADJACENCY_PX  = 170; // pixel proximity for cluster auto-detect in freeform mode
+
 /* ============================================================
    STATE
 ============================================================ */
 const state = {
   rooms:         [],   // Room[]
   students:      [],   // Student[]
+  classSets:     [],   // ClassSet[]
   currentRoomId: null, // string | null
 
   // UI-only (not persisted)
-  mode:            'move',   // 'move' | 'toggle' | 'cluster'
-  activeClusterId: null,     // string | null
+  mode:              'move',   // 'move' | 'toggle' | 'cluster'
+  activeClusterId:   null,     // string | null
+  activeClassSetId:  null,     // string | null — filter for student panel
+  showArchived:      false,    // show archived room tabs
   drag: { studentId: null, fromSeatId: null }
 };
 
 // Transient edit context for modals
 let editCtx = { type: null, id: null };
 let pendingPhoto = null; // base64 string | null
+let editingClassSetId = null; // class set currently open in editor
 
 /* ============================================================
    UTILITIES
@@ -43,8 +53,14 @@ function shuffle(arr) {
   return a;
 }
 
-/** Euclidean distance between two seat objects {row, col} */
+/** Euclidean distance between two seat objects.
+ *  Uses pixel x/y for freeform seats, row/col for grid seats.
+ *  Returns a grid-unit equivalent (grid seats: 1 unit = one cell). */
 function seatDist(s1, s2) {
+  if (s1.x !== null && s1.x !== undefined && s2.x !== null && s2.x !== undefined) {
+    const dx = s1.x - s2.x, dy = s1.y - s2.y;
+    return Math.sqrt(dx * dx + dy * dy) / CELL_SIZE;
+  }
   const dr = s1.row - s2.row, dc = s1.col - s2.col;
   return Math.sqrt(dr * dr + dc * dc);
 }
@@ -85,7 +101,15 @@ function avatarColour(gender) {
  */
 function roomCreate(name = 'New Room', rows = 5, cols = 6) {
   const id = uid();
-  const room = { id, name, rows, cols, seats: [], clusters: [] };
+  const room = {
+    id, name, rows, cols,
+    seats: [], clusters: [],
+    archived:       false,
+    layoutMode:     'grid',   // 'grid' | 'freeform'
+    frontDirection: 'top',    // 'top' | 'right' | 'bottom' | 'left'
+    canvasW: 900,
+    canvasH: 700
+  };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       room.seats.push(makeSeat(id, r, c));
@@ -105,11 +129,86 @@ function makeSeat(roomId, r, c) {
   };
 }
 
+/** Create a seat at arbitrary pixel coordinates (freeform mode). */
+function makeFreeformSeat(roomId, x, y) {
+  return { id: uid(), row: -1, col: -1, x, y, enabled: true, clusterId: null, studentId: null };
+}
+
 function roomDelete(id) {
   state.rooms = state.rooms.filter(r => r.id !== id);
   if (state.currentRoomId === id) {
-    state.currentRoomId = state.rooms[0]?.id ?? null;
+    state.currentRoomId = state.rooms.find(r => !r.archived)?.id ?? state.rooms[0]?.id ?? null;
   }
+}
+
+function roomArchive(id) {
+  const room = state.rooms.find(r => r.id === id);
+  if (room) room.archived = true;
+  if (state.currentRoomId === id) {
+    state.currentRoomId = state.rooms.find(r => !r.archived)?.id ?? null;
+  }
+}
+
+function roomUnarchive(id) {
+  const room = state.rooms.find(r => r.id === id);
+  if (room) room.archived = false;
+}
+
+/** Convert a grid-layout room to freeform, placing seats at their grid pixel positions. */
+function roomSwitchToFreeform(room) {
+  room.seats.forEach(s => {
+    s.x = FREEFORM_PAD + s.col * CELL_SIZE;
+    s.y = FREEFORM_PAD + s.row * CELL_SIZE;
+  });
+  room.canvasW = FREEFORM_PAD + room.cols * CELL_SIZE + FREEFORM_PAD;
+  room.canvasH = FREEFORM_PAD + room.rows * CELL_SIZE + FREEFORM_PAD;
+  room.layoutMode = 'freeform';
+}
+
+/** Snap all freeform seats to the nearest grid position and rebuild as a grid room. */
+function roomSwitchToGrid(room) {
+  const seen    = new Set();
+  const snapped = [];
+
+  // Sort by position so top-left seats "win" duplicates
+  const sorted = [...room.seats].filter(s => s.enabled).sort((a, b) =>
+    ((a.y ?? 0) - (b.y ?? 0)) || ((a.x ?? 0) - (b.x ?? 0))
+  );
+
+  for (const s of sorted) {
+    const col = Math.max(0, Math.round(((s.x ?? 0) - FREEFORM_PAD) / CELL_SIZE));
+    const row = Math.max(0, Math.round(((s.y ?? 0) - FREEFORM_PAD) / CELL_SIZE));
+    const key = `${row}_${col}`;
+    if (seen.has(key)) continue; // discard duplicate position
+    seen.add(key);
+    snapped.push(Object.assign({}, s, { row, col, x: undefined, y: undefined }));
+  }
+
+  if (!snapped.length) { alert('No seats to convert.'); return; }
+
+  const maxRow = Math.max(...snapped.map(s => s.row));
+  const maxCol = Math.max(...snapped.map(s => s.col));
+  room.rows = maxRow + 1;
+  room.cols = maxCol + 1;
+
+  // Build full grid: snapped seats enabled; gaps disabled
+  const seatMap = {};
+  snapped.forEach(s => { seatMap[`${s.row}_${s.col}`] = s; });
+
+  room.seats = [];
+  for (let r = 0; r <= maxRow; r++) {
+    for (let c = 0; c <= maxCol; c++) {
+      const key = `${r}_${c}`;
+      if (seatMap[key]) {
+        room.seats.push(seatMap[key]);
+      } else {
+        const empty = makeSeat(room.id, r, c);
+        empty.enabled = false;
+        room.seats.push(empty);
+      }
+    }
+  }
+  room.layoutMode = 'grid';
 }
 
 /**
@@ -195,8 +294,8 @@ function clusterDelete(room, id) {
 }
 
 /**
- * BFS auto-detect: group all mutually 8-connected enabled seats into clusters.
- * Components of size 1 are left without a cluster (isolated seats).
+ * BFS auto-detect: group all mutually adjacent enabled seats into clusters.
+ * Grid mode: 8-connected adjacency. Freeform mode: within FREEFORM_ADJACENCY_PX pixels.
  */
 function autoDetectClusters(room) {
   room.clusters = [];
@@ -219,11 +318,11 @@ function autoDetectClusters(room) {
       const cur = queue.shift();
       component.push(cur);
       enabled.forEach(n => {
-        if (
-          !visited.has(n.id) &&
-          Math.abs(n.row - cur.row) <= 1 &&
-          Math.abs(n.col - cur.col) <= 1
-        ) {
+        if (visited.has(n.id)) return;
+        const adjacent = room.layoutMode === 'freeform'
+          ? Math.hypot((n.x ?? 0) - (cur.x ?? 0), (n.y ?? 0) - (cur.y ?? 0)) <= FREEFORM_ADJACENCY_PX
+          : Math.abs(n.row - cur.row) <= 1 && Math.abs(n.col - cur.col) <= 1;
+        if (adjacent) {
           visited.add(n.id);
           queue.push(n);
         }
@@ -239,6 +338,35 @@ function autoDetectClusters(room) {
       component.forEach(s => { s.clusterId = cl.id; });
     }
   });
+}
+
+/* ============================================================
+   CLASS SET MANAGEMENT
+============================================================ */
+
+function classSetCreate(name = 'New Class Set', studentIds = []) {
+  const cs = { id: uid(), name, studentIds: [...studentIds] };
+  state.classSets.push(cs);
+  return cs;
+}
+
+function classSetUpdate(id, data) {
+  const cs = state.classSets.find(x => x.id === id);
+  if (cs) Object.assign(cs, data);
+}
+
+function classSetDelete(id) {
+  state.classSets = state.classSets.filter(x => x.id !== id);
+  if (state.activeClassSetId === id) state.activeClassSetId = null;
+  if (editingClassSetId === id) editingClassSetId = null;
+}
+
+/** Return the students that belong to the active class set, or all students. */
+function visibleStudents() {
+  if (!state.activeClassSetId) return state.students;
+  const cs = state.classSets.find(x => x.id === state.activeClassSetId);
+  if (!cs) return state.students;
+  return state.students.filter(s => cs.studentIds.includes(s.id));
 }
 
 /* ============================================================
@@ -261,7 +389,7 @@ function assignStudents(method) {
   const seats = room.seats.filter(s => s.enabled);
   if (!seats.length) { alert('No seats available in this room.'); return; }
 
-  let students = [...state.students];
+  let students = [...visibleStudents()];
   if (!students.length) { alert('No students to assign.'); return; }
 
   // ── Sort students ──────────────────────────────────────────
@@ -362,11 +490,84 @@ function resetDrag() {
    SAVE / LOAD
 ============================================================ */
 
+const AUTOSAVE_KEY          = 'spg_autosave_v2';
+const AUTOSAVE_DELAY_MS     = 600;
+const BADGE_FADE_DURATION_MS = 2500;
+
+function autosave() {
+  try {
+    const data = {
+      version:       2,
+      rooms:         state.rooms,
+      students:      state.students,
+      classSets:     state.classSets,
+      currentRoomId: state.currentRoomId
+    };
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
+    showAutosaveBadge('✔ Saved');
+  } catch (e) {
+    // localStorage may be full or unavailable — silently ignore
+  }
+}
+
+let _autosaveTimer = null;
+function scheduleAutosave() {
+  clearTimeout(_autosaveTimer);
+  _autosaveTimer = setTimeout(autosave, AUTOSAVE_DELAY_MS);
+}
+
+function showAutosaveBadge(text) {
+  const badge = document.getElementById('autosave-badge');
+  if (!badge) return;
+  badge.textContent = text;
+  badge.classList.add('visible');
+  clearTimeout(badge._fadeTimer);
+  badge._fadeTimer = setTimeout(() => badge.classList.remove('visible'), BADGE_FADE_DURATION_MS);
+}
+
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    return applyStateData(data);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Apply a serialised state object (v1 or v2) — returns true on success. */
+function applyStateData(data) {
+  if (!data || (data.version !== 1 && data.version !== 2)) return false;
+  state.rooms         = (data.rooms    || []).map(normaliseRoom);
+  state.students      = data.students  || [];
+  state.classSets     = data.classSets || [];
+  state.currentRoomId = data.currentRoomId ?? state.rooms.find(r => !r.archived)?.id ?? null;
+  state.mode              = 'move';
+  state.activeClusterId   = null;
+  state.activeClassSetId  = null;
+  return true;
+}
+
+/** Ensure a room object has all expected fields (backwards-compat). */
+function normaliseRoom(room) {
+  return Object.assign({
+    archived:       false,
+    clusters:       [],
+    seats:          [],
+    layoutMode:     'grid',
+    frontDirection: 'top',
+    canvasW:        900,
+    canvasH:        700
+  }, room);
+}
+
 function saveJSON() {
   const data = {
-    version: 1,
+    version:       2,
     rooms:         state.rooms,
     students:      state.students,
+    classSets:     state.classSets,
     currentRoomId: state.currentRoomId
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -381,14 +582,9 @@ function saveJSON() {
 }
 
 function loadJSON(data) {
-  if (!data || data.version !== 1) {
-    throw new Error('Unsupported or invalid file format (expected version 1).');
+  if (!applyStateData(data)) {
+    throw new Error('Unsupported or invalid file format (expected version 1 or 2).');
   }
-  state.rooms         = data.rooms    || [];
-  state.students      = data.students || [];
-  state.currentRoomId = data.currentRoomId ?? state.rooms[0]?.id ?? null;
-  state.mode          = 'move';
-  state.activeClusterId = null;
   renderAll();
 }
 
@@ -428,6 +624,92 @@ function importStudents(arr) {
   });
 }
 
+/**
+ * Import students from a CSV string.
+ * Expected header row: name[,gender[,marks]]
+ * Supports RFC 4180-style quoted fields (commas inside quotes are preserved).
+ * Extra columns are ignored.
+ */
+function importStudentsCSV(csvText) {
+  const rows = parseCSVRows(csvText);
+  if (rows.length < 2) throw new Error('CSV must have a header row and at least one data row.');
+
+  // Find column indices (case-insensitive, strip surrounding quotes)
+  const headers = rows[0].map(h => h.toLowerCase());
+  const col = name => headers.indexOf(name);
+  const iName   = col('name');
+  const iGender = col('gender');
+  const iMarks  = col('marks');
+
+  if (iName === -1) throw new Error('CSV must have a "name" column.');
+
+  let imported = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const cells = rows[i];
+    const name = cells[iName];
+    if (!name) continue;
+    const marksRaw = iMarks !== -1 ? parseFloat(cells[iMarks]) : NaN;
+    studentCreate({
+      name,
+      gender: iGender !== -1 ? (cells[iGender] || '') : '',
+      marks:  !isNaN(marksRaw) ? marksRaw : null
+    });
+    imported++;
+  }
+  if (!imported) throw new Error('No valid student rows found in CSV.');
+  return imported;
+}
+
+/**
+ * Parse a CSV string into a 2-D array of strings.
+ * Handles RFC 4180-style double-quoted fields (including commas and newlines inside quotes).
+ */
+function parseCSVRows(csvText) {
+  const rows = [];
+  let row = [];
+  let i = 0;
+  const len = csvText.length;
+
+  while (i < len) {
+    if (csvText[i] === '"') {
+      // Quoted field
+      let field = '';
+      i++; // skip opening quote
+      while (i < len) {
+        if (csvText[i] === '"' && csvText[i + 1] === '"') {
+          field += '"'; i += 2; // escaped quote
+        } else if (csvText[i] === '"') {
+          i++; break; // closing quote
+        } else {
+          field += csvText[i++];
+        }
+      }
+      row.push(field); // quoted fields: preserve content as-is (no trim)
+      // Skip comma or newline after closing quote
+      if (csvText[i] === ',') i++;
+    } else if (csvText[i] === ',') {
+      row.push('');
+      i++;
+    } else if (csvText[i] === '\r' || csvText[i] === '\n') {
+      // End of row
+      if (csvText[i] === '\r' && csvText[i + 1] === '\n') i++;
+      i++;
+      if (row.length) rows.push(row);
+      row = [];
+    } else {
+      // Unquoted field
+      let field = '';
+      while (i < len && csvText[i] !== ',' && csvText[i] !== '\r' && csvText[i] !== '\n') {
+        field += csvText[i++];
+      }
+      row.push(field.trim());
+      if (csvText[i] === ',') i++;
+    }
+  }
+  if (row.length) rows.push(row);
+  return rows.filter(r => r.some(c => c !== ''));
+}
+
 /* ============================================================
    RENDER — TABS
 ============================================================ */
@@ -435,12 +717,23 @@ function renderTabs() {
   const el = document.getElementById('room-tabs');
   el.innerHTML = '';
 
+  const archivedCount = state.rooms.filter(r => r.archived).length;
+  const toggleBtn = document.getElementById('toggle-archived-btn');
+  if (toggleBtn) {
+    toggleBtn.textContent = `📦 Archived${archivedCount ? ` (${archivedCount})` : ''}`;
+    toggleBtn.classList.toggle('active-archived', state.showArchived);
+  }
+
   state.rooms.forEach(room => {
+    if (room.archived && !state.showArchived) return;
+
     const btn = document.createElement('button');
-    btn.className = 'room-tab' + (room.id === state.currentRoomId ? ' active' : '');
+    btn.className = 'room-tab' +
+      (room.id === state.currentRoomId ? ' active' : '') +
+      (room.archived ? ' archived-tab' : '');
 
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = room.name;
+    nameSpan.textContent = (room.archived ? '📦 ' : '') + room.name;
 
     const editIcon = document.createElement('span');
     editIcon.className = 'tab-edit';
@@ -459,19 +752,46 @@ function renderTabs() {
 }
 
 /* ============================================================
-   RENDER — STUDENT LIST
+   RENDER — STUDENT LIST + CLASS SET BAR
 ============================================================ */
+function renderClassSetBar() {
+  const sel = document.getElementById('class-set-select');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All Students</option>';
+  state.classSets.forEach(cs => {
+    const opt = document.createElement('option');
+    opt.value = cs.id;
+    opt.textContent = `${cs.name} (${cs.studentIds.length})`;
+    sel.appendChild(opt);
+  });
+  // Restore selection
+  if (state.activeClassSetId && [...sel.options].some(o => o.value === state.activeClassSetId)) {
+    sel.value = state.activeClassSetId;
+  } else {
+    sel.value = '';
+    state.activeClassSetId = null;
+  }
+}
+
 function renderStudentList() {
   const el = document.getElementById('student-list');
   el.innerHTML = '';
 
+  const shown = visibleStudents();
+
   if (!state.students.length) {
-    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 Import" to import from JSON.</div>';
+    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 JSON" / "📥 CSV" to import.</div>';
+    return;
+  }
+
+  if (!shown.length) {
+    el.innerHTML = '<div class="empty-msg">No students in this class set.<br>Manage class sets using ⚙️.</div>';
     return;
   }
 
   const room = currentRoom();
-  state.students.forEach(student => {
+  shown.forEach(student => {
     const seatedHere = room ? !!seatByStudentId(room, student.id) : false;
     el.appendChild(buildStudentCard(student, seatedHere));
   });
@@ -552,24 +872,92 @@ function buildStudentCard(student, isSeated) {
 }
 
 /* ============================================================
-   RENDER — GRID
+   RENDER — GRID (dispatcher)
 ============================================================ */
 function renderGrid() {
-  const grid    = document.getElementById('room-grid');
-  const wrapper = document.getElementById('grid-wrapper');
+  const grid = document.getElementById('room-grid');
   grid.innerHTML = '';
+  grid.className = 'room-grid'; // reset any added classes
 
   const room = currentRoom();
   if (!room) {
     grid.innerHTML = '<div class="no-room-msg">No room selected.<br>Create a room using "＋ New Room".</div>';
     document.getElementById('room-name-display').textContent = 'No room selected';
+    updateRoomControls(null);
+    updateFrontLabel(null);
     return;
   }
 
   document.getElementById('room-name-display').textContent = room.name;
-  document.getElementById('rows-input').value = room.rows;
-  document.getElementById('cols-input').value = room.cols;
+  updateRoomControls(room);
+  updateFrontLabel(room);
 
+  if (room.layoutMode === 'freeform') {
+    renderFreeformGrid(room, grid);
+    if (state.mode === 'layout') {
+      showInfoBar('Click canvas to add desk  ·  Drag to move  ·  Right-click to delete');
+    }
+  } else {
+    renderRegularGrid(room, grid);
+  }
+}
+
+/* ── Front label & direction ─────────────────────────────── */
+function updateFrontLabel(room) {
+  const wrapper = document.getElementById('grid-wrapper');
+  const label   = document.getElementById('front-label');
+  const dir     = room?.frontDirection ?? 'top';
+
+  if (wrapper) wrapper.dataset.frontDir = dir;
+  const arrows = { top: '▲', right: '►', bottom: '▼', left: '◄' };
+  if (label) label.textContent = (arrows[dir] ?? '▲') + ' FRONT OF CLASS';
+}
+
+/* ── Room header controls ────────────────────────────────── */
+function updateRoomControls(room) {
+  const isFreeform = room?.layoutMode === 'freeform';
+
+  // Archive button label
+  const archBtn = document.getElementById('archive-room-btn');
+  if (archBtn) {
+    archBtn.textContent = room?.archived ? '📤 Unarchive' : '📦 Archive';
+    archBtn.title       = room?.archived ? 'Restore this room' : 'Archive this room';
+  }
+
+  // Grid vs canvas size groups
+  const gridGroup   = document.getElementById('grid-size-group');
+  const canvasGroup = document.getElementById('canvas-size-group');
+  if (gridGroup)   gridGroup.style.display   = isFreeform ? 'none' : 'flex';
+  if (canvasGroup) canvasGroup.style.display = isFreeform ? 'flex' : 'none';
+
+  if (room && !isFreeform) {
+    document.getElementById('rows-input').value = room.rows;
+    document.getElementById('cols-input').value = room.cols;
+  }
+  if (room && isFreeform) {
+    document.getElementById('canvas-w-input').value = room.canvasW ?? 900;
+    document.getElementById('canvas-h-input').value = room.canvasH ?? 700;
+  }
+
+  // Layout toggle button
+  const layoutBtn = document.getElementById('layout-toggle-btn');
+  if (layoutBtn) {
+    layoutBtn.textContent = isFreeform ? '⊞ Grid Mode' : '⊞ Freeform';
+    layoutBtn.className   = isFreeform ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+  }
+
+  // "Edit Layout" mode button: only visible for freeform rooms
+  const layoutModeBtn = document.getElementById('mode-layout');
+  if (layoutModeBtn) layoutModeBtn.style.display = isFreeform ? '' : 'none';
+
+  // Direction buttons highlight
+  document.querySelectorAll('.dir-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.dir === (room?.frontDirection ?? 'top'));
+  });
+}
+
+/* ── Regular (grid) rendering ────────────────────────────── */
+function renderRegularGrid(room, grid) {
   grid.style.gridTemplateColumns = `repeat(${room.cols}, 78px)`;
   grid.style.gridTemplateRows    = `repeat(${room.rows}, 78px)`;
 
@@ -586,11 +974,11 @@ function renderGrid() {
         cell.addEventListener('click', () => {
           if (state.mode !== 'toggle') return;
           if (!seat) {
-            // create a new seat here
             room.seats.push(makeSeat(room.id, r, c));
           } else {
             seat.enabled = true;
           }
+          scheduleAutosave();
           renderGrid();
         });
 
@@ -598,99 +986,214 @@ function renderGrid() {
         continue;
       }
 
-      // ── Enabled seat ────────────────────────────────────────
+      // Enabled seat
       cell.dataset.seatId = seat.id;
+      applyClusterStyling(cell, seat, room);
 
-      // Cluster styling
-      if (seat.clusterId) {
-        const cl = room.clusters.find(x => x.id === seat.clusterId);
-        if (cl) {
-          cell.classList.add('in-cluster');
-          cell.style.borderColor     = cl.colour;
-          cell.style.backgroundColor = cl.colour + '22';
-        }
-      }
-
-      // Mode-specific classes
       if (state.mode === 'toggle')  cell.classList.add('toggleable');
       if (state.mode === 'cluster') cell.classList.add('cluster-mode');
 
-      if (state.mode === 'cluster' &&
-          state.activeClusterId &&
-          seat.clusterId === state.activeClusterId) {
-        const cl = room.clusters.find(x => x.id === state.activeClusterId);
-        if (cl) {
-          cell.style.borderColor     = cl.colour;
-          cell.style.backgroundColor = cl.colour + '44';
-        }
-      }
-
-      // Student in seat
       if (seat.studentId) {
         cell.classList.add('has-student');
         const student = studentById(seat.studentId);
         if (student) cell.appendChild(buildMiniStudent(student, seat.id));
       }
 
-      // ── Event: click ────────────────────────────────────────
       cell.addEventListener('click', () => {
         if (state.mode === 'toggle') {
-          seat.enabled    = false;
-          seat.studentId  = null;
-          seat.clusterId  = null;
+          seat.enabled   = false;
+          seat.studentId = null;
+          seat.clusterId = null;
+          scheduleAutosave();
           renderGrid();
-
         } else if (state.mode === 'cluster') {
-          if (!state.activeClusterId) {
-            showInfoBar('Select a cluster in the right panel first, or create one.');
-            return;
-          }
-          seat.clusterId = (seat.clusterId === state.activeClusterId)
-            ? null
-            : state.activeClusterId;
-          renderGrid();
-          renderClusterPanel();
+          handleClusterClick(seat, room);
         }
       });
 
-      // ── Drag-and-drop drop target (only in move mode) ───────
-      if (state.mode === 'move') {
-        cell.addEventListener('dragover', e => {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-          cell.classList.add('drag-over');
-        });
-        cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
-        cell.addEventListener('drop', e => {
-          e.preventDefault();
-          cell.classList.remove('drag-over');
-          handleDrop(seat.id);
-        });
-      }
+      if (state.mode === 'move') attachDropTarget(cell, seat.id);
 
-      // ── Hover info ──────────────────────────────────────────
       cell.addEventListener('mouseenter', () => {
-        if (seat.studentId) {
-          const s = studentById(seat.studentId);
-          if (s) {
-            const parts = [`${s.name}`];
-            if (s.gender) parts.push(s.gender);
-            if (s.marks != null) parts.push(`Marks: ${s.marks}%`);
-            if (s.sitNear.length)
-              parts.push(`Sit near: ${s.sitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
-            if (s.doNotSitNear.length)
-              parts.push(`Separate from: ${s.doNotSitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
-            showInfoBar(parts.join('  |  '));
-          }
-        } else {
-          showInfoBar(`Seat row ${r + 1}, col ${c + 1} — empty`);
-        }
+        if (seat.studentId) showStudentHover(seat.studentId);
+        else showInfoBar(`Seat row ${r + 1}, col ${c + 1} — empty`);
       });
       cell.addEventListener('mouseleave', () => showInfoBar(''));
 
       grid.appendChild(cell);
     }
   }
+}
+
+/* ── Freeform rendering ──────────────────────────────────── */
+function renderFreeformGrid(room, grid) {
+  grid.classList.add('freeform');
+  grid.style.cssText = `width:${room.canvasW}px; height:${room.canvasH}px;`;
+
+  room.seats.forEach(seat => {
+    const cell = document.createElement('div');
+    cell.className = 'seat-cell freeform-seat';
+    cell.dataset.seatId = seat.id;
+    cell.style.left = (seat.x ?? 0) + 'px';
+    cell.style.top  = (seat.y ?? 0) + 'px';
+
+    applyClusterStyling(cell, seat, room);
+
+    if (state.mode === 'cluster') cell.classList.add('cluster-mode');
+
+    if (seat.studentId) {
+      cell.classList.add('has-student');
+      const student = studentById(seat.studentId);
+      if (student) {
+        const mini = buildMiniStudent(student, seat.id);
+        if (state.mode === 'layout') mini.draggable = false;
+        cell.appendChild(mini);
+      }
+    }
+
+    if (state.mode === 'layout') {
+      cell.classList.add('layout-draggable');
+      attachFreeformDrag(cell, seat, room);
+    }
+
+    cell.addEventListener('click', () => {
+      if (state.mode === 'cluster') handleClusterClick(seat, room);
+    });
+
+    if (state.mode === 'move') attachDropTarget(cell, seat.id);
+
+    cell.addEventListener('mouseenter', () => {
+      if (seat.studentId) showStudentHover(seat.studentId);
+      else showInfoBar(`Desk — empty`);
+    });
+    cell.addEventListener('mouseleave', () => {
+      if (state.mode !== 'layout') showInfoBar('');
+    });
+
+    grid.appendChild(cell);
+  });
+
+  // Click on empty canvas in layout mode → add a desk
+  if (state.mode === 'layout') {
+    grid.classList.add('layout-canvas');
+    grid.addEventListener('pointerdown', e => {
+      if (e.target !== grid) return;
+      e.preventDefault();
+      const rect = grid.getBoundingClientRect();
+      const x = Math.round(Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF)));
+      const y = Math.round(Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, e.clientY - rect.top  - SEAT_HALF)));
+      room.seats.push(makeFreeformSeat(room.id, x, y));
+      scheduleAutosave();
+      renderGrid();
+    });
+  }
+}
+
+/* ── Freeform seat drag (pointer events) ─────────────────── */
+function attachFreeformDrag(cell, seat, room) {
+  cell.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return; // left button only
+    e.stopPropagation();
+
+    const startClientX = e.clientX, startClientY = e.clientY;
+    const origX = seat.x ?? 0, origY = seat.y ?? 0;
+    let moved = false;
+
+    cell.setPointerCapture(e.pointerId);
+    cell.classList.add('dragging');
+
+    const onMove = ev => {
+      const dx = ev.clientX - startClientX;
+      const dy = ev.clientY - startClientY;
+      if (!moved && Math.hypot(dx, dy) < 4) return;
+      moved = true;
+      seat.x = Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, origX + dx));
+      seat.y = Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, origY + dy));
+      cell.style.left = seat.x + 'px';
+      cell.style.top  = seat.y + 'px';
+    };
+
+    const onUp = () => {
+      cell.removeEventListener('pointermove', onMove);
+      cell.removeEventListener('pointerup',   onUp);
+      cell.classList.remove('dragging');
+      if (moved) {
+        seat.x = Math.round(seat.x);
+        seat.y = Math.round(seat.y);
+        scheduleAutosave();
+      }
+    };
+
+    cell.addEventListener('pointermove', onMove);
+    cell.addEventListener('pointerup',   onUp);
+  });
+
+  // Right-click to delete in layout mode
+  cell.addEventListener('contextmenu', e => {
+    if (state.mode !== 'layout') return;
+    e.preventDefault();
+    if (seat.studentId && !confirm('This desk has a student assigned. Delete it anyway?')) return;
+    if (seat.studentId) {
+      const existing = seatByStudentId(currentRoom(), seat.studentId);
+      if (existing) existing.studentId = null;
+    }
+    room.seats = room.seats.filter(s => s.id !== seat.id);
+    scheduleAutosave();
+    renderGrid();
+    renderStudentList();
+  });
+}
+
+/* ── Shared seat helpers ─────────────────────────────────── */
+function applyClusterStyling(cell, seat, room) {
+  if (!seat.clusterId) return;
+  const cl = room.clusters.find(x => x.id === seat.clusterId);
+  if (!cl) return;
+  cell.classList.add('in-cluster');
+  cell.style.borderColor     = cl.colour;
+  cell.style.backgroundColor = cl.colour + '22';
+
+  if (state.mode === 'cluster' && state.activeClusterId === seat.clusterId) {
+    cell.style.borderColor     = cl.colour;
+    cell.style.backgroundColor = cl.colour + '44';
+  }
+}
+
+function handleClusterClick(seat, room) {
+  if (!state.activeClusterId) {
+    showInfoBar('Select a cluster in the right panel first, or create one.');
+    return;
+  }
+  seat.clusterId = (seat.clusterId === state.activeClusterId) ? null : state.activeClusterId;
+  scheduleAutosave();
+  renderGrid();
+  renderClusterPanel();
+}
+
+function attachDropTarget(cell, seatId) {
+  cell.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    cell.classList.add('drag-over');
+  });
+  cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
+  cell.addEventListener('drop', e => {
+    e.preventDefault();
+    cell.classList.remove('drag-over');
+    handleDrop(seatId);
+  });
+}
+
+function showStudentHover(studentId) {
+  const s = studentById(studentId);
+  if (!s) return;
+  const parts = [s.name];
+  if (s.gender) parts.push(s.gender);
+  if (s.marks != null) parts.push(`Marks: ${s.marks}%`);
+  if (s.sitNear.length)
+    parts.push(`Sit near: ${s.sitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
+  if (s.doNotSitNear.length)
+    parts.push(`Separate from: ${s.doNotSitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
+  showInfoBar(parts.join('  |  '));
 }
 
 function showInfoBar(text) {
@@ -824,9 +1327,11 @@ function renderClusterPanel() {
 ============================================================ */
 function renderAll() {
   renderTabs();
+  renderClassSetBar();
   renderStudentList();
   renderGrid();
   renderClusterPanel();
+  scheduleAutosave();
 }
 
 /* ============================================================
@@ -1013,9 +1518,116 @@ function saveClusterModal() {
 }
 
 /* ============================================================
+   CLASS SET MODAL
+============================================================ */
+function openClassSetModal() {
+  editingClassSetId = null;
+  renderClassSetModalList();
+  showModalEl('classset-modal');
+}
+
+function renderClassSetModalList() {
+  const list = document.getElementById('classset-list');
+  list.innerHTML = '';
+
+  if (!state.classSets.length) {
+    list.innerHTML = '<div class="empty-msg">No class sets yet.<br>Click "＋ New" to create one.</div>';
+  }
+
+  state.classSets.forEach(cs => {
+    const item = document.createElement('div');
+    item.className = 'classset-list-item' + (cs.id === editingClassSetId ? ' active' : '');
+    item.textContent = cs.name;
+    item.dataset.id = cs.id;
+    item.addEventListener('click', () => {
+      editingClassSetId = cs.id;
+      renderClassSetModalList();
+      openClassSetEditor(cs.id);
+    });
+    list.appendChild(item);
+  });
+}
+
+function openClassSetEditor(id) {
+  const cs = state.classSets.find(x => x.id === id);
+  document.getElementById('classset-no-selection').style.display = 'none';
+  const editor = document.getElementById('classset-editor');
+  editor.style.display = 'block';
+
+  document.getElementById('classset-name-input').value = cs?.name ?? '';
+
+  // Student checkboxes
+  const sl = document.getElementById('classset-student-list');
+  sl.innerHTML = '';
+  if (!state.students.length) {
+    sl.innerHTML = '<div class="empty-msg">No students yet.</div>';
+    return;
+  }
+  state.students.forEach(s => {
+    const label = document.createElement('label');
+    label.className = 'chk-label';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = s.id;
+    cb.checked = cs ? cs.studentIds.includes(s.id) : false;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(s.name));
+    sl.appendChild(label);
+  });
+}
+
+function saveClassSetEditor() {
+  const name = document.getElementById('classset-name-input').value.trim();
+  if (!name) { alert('Please enter a class set name.'); return; }
+  const studentIds = [
+    ...document.querySelectorAll('#classset-student-list input[type="checkbox"]:checked')
+  ].map(cb => cb.value);
+
+  if (editingClassSetId) {
+    classSetUpdate(editingClassSetId, { name, studentIds });
+  } else {
+    const cs = classSetCreate(name, studentIds);
+    editingClassSetId = cs.id;
+  }
+  renderClassSetModalList();
+  renderClassSetBar();
+  renderStudentList();
+  scheduleAutosave();
+  // Update editor to reflect saved state
+  openClassSetEditor(editingClassSetId);
+}
+
+function newClassSetFromModal() {
+  editingClassSetId = null;
+  document.getElementById('classset-no-selection').style.display = 'none';
+  const editor = document.getElementById('classset-editor');
+  editor.style.display = 'block';
+  document.getElementById('classset-name-input').value = '';
+  const sl = document.getElementById('classset-student-list');
+  sl.innerHTML = '';
+  state.students.forEach(s => {
+    const label = document.createElement('label');
+    label.className = 'chk-label';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = s.id;
+    cb.checked = false;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(s.name));
+    sl.appendChild(label);
+  });
+  renderClassSetModalList();
+}
+
+/* ============================================================
    MODE SWITCHING
 ============================================================ */
 function setMode(mode) {
+  // 'layout' only makes sense for freeform rooms
+  if (mode === 'layout' && currentRoom()?.layoutMode !== 'freeform') {
+    alert('Switch this room to "Freeform" layout first using the ⊞ Freeform button in the room header.');
+    return;
+  }
   state.mode = mode;
   document.querySelectorAll('.mode-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
@@ -1055,6 +1667,11 @@ function initEvents() {
   document.getElementById('add-room-btn').addEventListener('click',
     () => openModal('room'));
 
+  document.getElementById('toggle-archived-btn').addEventListener('click', () => {
+    state.showArchived = !state.showArchived;
+    renderTabs();
+  });
+
   document.getElementById('resize-btn').addEventListener('click', () => {
     const room = currentRoom();
     if (!room) return;
@@ -1066,6 +1683,21 @@ function initEvents() {
     roomResize(room, rows, cols);
     renderGrid();
     renderClusterPanel();
+    scheduleAutosave();
+  });
+
+  document.getElementById('archive-room-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    if (room.archived) {
+      roomUnarchive(room.id);
+      renderAll();
+    } else {
+      if (confirm(`Archive room "${room.name}"?\nIt will be hidden from the tabs but can be restored.`)) {
+        roomArchive(room.id);
+        renderAll();
+      }
+    }
   });
 
   document.getElementById('delete-room-btn').addEventListener('click', () => {
@@ -1075,6 +1707,54 @@ function initEvents() {
       roomDelete(room.id);
       renderAll();
     }
+  });
+
+  // ── Front direction buttons ───────────────────────────────
+  document.querySelectorAll('.dir-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const room = currentRoom();
+      if (!room) return;
+      room.frontDirection = btn.dataset.dir;
+      updateFrontLabel(room);
+      updateRoomControls(room);
+      scheduleAutosave();
+    });
+  });
+
+  // ── Layout mode toggle (grid ↔ freeform) ──────────────────
+  document.getElementById('layout-toggle-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    if (room.layoutMode === 'grid') {
+      if (confirm('Switch to freeform layout?\nDesks will be placed at their current grid positions and can be moved freely.\nYou can switch back to grid at any time.')) {
+        roomSwitchToFreeform(room);
+        state.mode = 'layout'; // auto-enter layout mode
+        renderAll();
+        scheduleAutosave();
+      }
+    } else {
+      if (confirm('Switch back to grid layout?\nDesks will be snapped to the nearest grid position.\nThis may reorder your layout.')) {
+        roomSwitchToGrid(room);
+        if (state.mode === 'layout') state.mode = 'move'; // layout mode no longer valid
+        renderAll();
+        scheduleAutosave();
+      }
+    }
+  });
+
+  // ── Canvas resize (freeform mode) ─────────────────────────
+  document.getElementById('resize-canvas-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    const w = parseInt(document.getElementById('canvas-w-input').value, 10);
+    const h = parseInt(document.getElementById('canvas-h-input').value, 10);
+    if (isNaN(w) || isNaN(h) || w < 300 || h < 200 || w > 3000 || h > 2000) {
+      alert('Canvas width must be 300–3000 and height 200–2000.'); return;
+    }
+    room.canvasW = w;
+    room.canvasH = h;
+    renderGrid();
+    scheduleAutosave();
   });
 
   // ── Mode buttons ─────────────────────────────────────────
@@ -1088,6 +1768,7 @@ function initEvents() {
     assignStudents(method);
     renderGrid();
     renderStudentList();
+    scheduleAutosave();
   });
 
   document.getElementById('clear-btn').addEventListener('click', () => {
@@ -1097,6 +1778,7 @@ function initEvents() {
       room.seats.forEach(s => { s.studentId = null; });
       renderGrid();
       renderStudentList();
+      scheduleAutosave();
     }
   });
 
@@ -1104,7 +1786,7 @@ function initEvents() {
   document.getElementById('add-student-btn').addEventListener('click',
     () => openModal('student'));
 
-  document.getElementById('import-btn').addEventListener('click',
+  document.getElementById('import-json-btn').addEventListener('click',
     () => document.getElementById('import-file').click()
   );
   document.getElementById('import-file').addEventListener('change', e => {
@@ -1114,7 +1796,7 @@ function initEvents() {
     reader.onload = evt => {
       try {
         importStudents(JSON.parse(evt.target.result));
-        renderStudentList();
+        renderAll();
         alert('Students imported successfully.');
       } catch (err) {
         alert('Import error: ' + err.message);
@@ -1122,6 +1804,54 @@ function initEvents() {
     };
     reader.readAsText(file);
     e.target.value = '';
+  });
+
+  document.getElementById('import-csv-btn').addEventListener('click',
+    () => document.getElementById('import-csv-file').click()
+  );
+  document.getElementById('import-csv-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      try {
+        const count = importStudentsCSV(evt.target.result);
+        renderAll();
+        alert(`${count} student${count !== 1 ? 's' : ''} imported from CSV.`);
+      } catch (err) {
+        alert('CSV import error: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // ── Class set selector ───────────────────────────────────
+  document.getElementById('class-set-select').addEventListener('change', e => {
+    state.activeClassSetId = e.target.value || null;
+    renderStudentList();
+  });
+
+  document.getElementById('manage-class-sets-btn').addEventListener('click', () => {
+    openClassSetModal();
+  });
+
+  // Class set modal buttons
+  document.getElementById('new-classset-btn').addEventListener('click', newClassSetFromModal);
+  document.getElementById('classset-save-btn').addEventListener('click', saveClassSetEditor);
+  document.getElementById('classset-delete-btn').addEventListener('click', () => {
+    if (!editingClassSetId) return;
+    const cs = state.classSets.find(x => x.id === editingClassSetId);
+    if (confirm(`Delete class set "${cs?.name}"?`)) {
+      classSetDelete(editingClassSetId);
+      editingClassSetId = null;
+      document.getElementById('classset-editor').style.display = 'none';
+      document.getElementById('classset-no-selection').style.display = '';
+      renderClassSetModalList();
+      renderClassSetBar();
+      renderStudentList();
+      scheduleAutosave();
+    }
   });
 
   // ── Photo selection ──────────────────────────────────────
@@ -1153,6 +1883,7 @@ function initEvents() {
       autoDetectClusters(room);
       renderClusterPanel();
       renderGrid();
+      scheduleAutosave();
     }
   });
 
@@ -1198,9 +1929,12 @@ function initEvents() {
 function init() {
   initEvents();
 
-  // Create a default room so the app is immediately usable
-  const room = roomCreate('Classroom A', 5, 6);
-  state.currentRoomId = room.id;
+  // Try to restore from localStorage; fall back to a default room
+  const restored = loadFromStorage();
+  if (!restored) {
+    const room = roomCreate('Classroom A', 5, 6);
+    state.currentRoomId = room.id;
+  }
 
   renderAll();
 }

@@ -13,6 +13,7 @@
   <div class="header-left">
     <span class="logo">🎓</span>
     <h1>Seating Plan Generator</h1>
+    <span class="autosave-badge" id="autosave-badge"></span>
   </div>
   <div class="header-right">
     <button class="btn btn-secondary" id="save-btn">💾 Save JSON</button>
@@ -25,6 +26,7 @@
 <div class="room-bar">
   <div class="room-tabs" id="room-tabs"></div>
   <button class="btn btn-primary btn-sm" id="add-room-btn">＋ New Room</button>
+  <button class="btn btn-secondary btn-sm" id="toggle-archived-btn" title="Show / hide archived rooms">📦 Archived</button>
 </div>
 
 <!-- ── TOOLBAR ──────────────────────────────────────────── -->
@@ -34,6 +36,7 @@
     <button class="btn mode-btn active" data-mode="move"    id="mode-move">↕ Move</button>
     <button class="btn mode-btn"        data-mode="toggle"  id="mode-toggle">⬜ Edit Seats</button>
     <button class="btn mode-btn"        data-mode="cluster" id="mode-cluster">🔲 Edit Clusters</button>
+    <button class="btn mode-btn"        data-mode="layout"  id="mode-layout" style="display:none">⊞ Edit Layout</button>
   </div>
   <div class="toolbar-group">
     <span class="toolbar-label">Assign:</span>
@@ -59,12 +62,21 @@
 
   <!-- LEFT: student roster -->
   <aside class="panel panel-left">
+    <!-- Class set selector -->
+    <div class="class-set-bar" id="class-set-bar">
+      <select id="class-set-select" title="Filter students by class set">
+        <option value="">All Students</option>
+      </select>
+      <button class="btn-icon" id="manage-class-sets-btn" title="Manage class sets">⚙️</button>
+    </div>
     <div class="panel-header">
       <h2>Students</h2>
       <div class="panel-actions">
         <button class="btn btn-primary  btn-sm" id="add-student-btn">＋ Add</button>
-        <button class="btn btn-secondary btn-sm" id="import-btn">📥 Import</button>
+        <button class="btn btn-secondary btn-sm" id="import-json-btn">📥 JSON</button>
         <input type="file" id="import-file" accept=".json" style="display:none" />
+        <button class="btn btn-secondary btn-sm" id="import-csv-btn">📥 CSV</button>
+        <input type="file" id="import-csv-file" accept=".csv" style="display:none" />
       </div>
     </div>
     <div class="student-list" id="student-list"></div>
@@ -74,16 +86,32 @@
   <main class="panel panel-centre">
     <div class="room-header" id="room-header">
       <h2 id="room-name-display">No room selected</h2>
-      <div class="room-config">
-        <label>Rows:<input type="number" id="rows-input" value="5" min="1" max="30" /></label>
-        <label>Cols:<input type="number" id="cols-input" value="6" min="1" max="30" /></label>
-        <button class="btn btn-secondary btn-sm" id="resize-btn">↔ Resize</button>
+    <div class="room-config">
+        <!-- Grid size — hidden in freeform mode -->
+        <div id="grid-size-group" class="room-config-group">
+          <label>Rows:<input type="number" id="rows-input" value="5" min="1" max="30" /></label>
+          <label>Cols:<input type="number" id="cols-input" value="6" min="1" max="30" /></label>
+          <button class="btn btn-secondary btn-sm" id="resize-btn">↔ Resize</button>
+        </div>
+        <!-- Canvas size — shown only in freeform mode -->
+        <div id="canvas-size-group" class="room-config-group" style="display:none">
+          <label>W:<input type="number" id="canvas-w-input" value="900" min="300" max="3000" step="50" /></label>
+          <label>H:<input type="number" id="canvas-h-input" value="700" min="200" max="2000" step="50" /></label>
+          <button class="btn btn-secondary btn-sm" id="resize-canvas-btn">↔ Resize Canvas</button>
+        </div>
+        <span class="toolbar-label room-config-sep">Front:</span>
+        <button class="btn btn-sm dir-btn active" data-dir="top"    title="Front of class at top"   >↑</button>
+        <button class="btn btn-sm dir-btn"         data-dir="right"  title="Front of class at right" >→</button>
+        <button class="btn btn-sm dir-btn"         data-dir="bottom" title="Front of class at bottom">↓</button>
+        <button class="btn btn-sm dir-btn"         data-dir="left"   title="Front of class at left"  >←</button>
+        <button class="btn btn-secondary btn-sm" id="layout-toggle-btn">⊞ Freeform</button>
+        <button class="btn btn-warning    btn-sm" id="archive-room-btn">📦 Archive</button>
         <button class="btn btn-danger    btn-sm" id="delete-room-btn">🗑 Delete Room</button>
       </div>
     </div>
     <div class="grid-scroll">
       <div class="grid-wrapper" id="grid-wrapper">
-        <div class="front-label">▲ FRONT OF CLASS</div>
+        <div class="front-label" id="front-label">▲ FRONT OF CLASS</div>
         <div class="room-grid" id="room-grid"></div>
       </div>
     </div>
@@ -199,6 +227,48 @@
     <div class="modal-footer">
       <button class="btn btn-primary"   id="cluster-modal-save">Save</button>
       <button class="btn btn-secondary" data-close="cluster-modal">Cancel</button>
+    </div>
+  </div>
+  <!-- CLASS SET MODAL -->
+  <div class="modal modal-wide" id="classset-modal">
+    <div class="modal-header">
+      <h3 id="classset-modal-title">Manage Class Sets</h3>
+      <button class="modal-close" data-close="classset-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="classset-layout">
+        <!-- Left: list of class sets -->
+        <div class="classset-list-col">
+          <div class="classset-list-header">
+            <span style="font-size:12px;font-weight:600;color:var(--text-muted)">CLASS SETS</span>
+            <button class="btn btn-primary btn-sm" id="new-classset-btn">＋ New</button>
+          </div>
+          <div id="classset-list" class="classset-list"></div>
+        </div>
+        <!-- Right: edit selected class set -->
+        <div class="classset-edit-col" id="classset-edit-col">
+          <div id="classset-no-selection" class="empty-msg" style="padding:30px 10px">
+            Select a class set on the left, or create a new one.
+          </div>
+          <div id="classset-editor" style="display:none">
+            <div class="form-group" style="margin-bottom:12px">
+              <label for="classset-name-input">Name</label>
+              <input type="text" id="classset-name-input" placeholder="e.g. Year 10 Maths" />
+            </div>
+            <div class="form-group">
+              <label>Students in this class set</label>
+              <div id="classset-student-list" class="constraint-list" style="max-height:260px"></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+              <button class="btn btn-danger btn-sm" id="classset-delete-btn">🗑 Delete Set</button>
+              <button class="btn btn-primary btn-sm" id="classset-save-btn">💾 Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="classset-modal">Close</button>
     </div>
   </div>
 
