@@ -1193,7 +1193,7 @@ function initEvents() {
 }
 
 /* ============================================================
-   INITIALISATION
+   INITIALIZATION
 ============================================================ */
 function init() {
   initEvents();
