@@ -854,6 +854,6 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
 /* ============================================================
    UNDO / REDO BUTTON DISABLED STATE
 ============================================================ */
-.btn:disabled { opacity: .35; cursor: not-allowed; }
-.btn:disabled:hover { opacity: .35; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn:disabled:hover { opacity: .5; }
 .btn:disabled:active { transform: none; }

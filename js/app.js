@@ -51,6 +51,11 @@ let editCtx = { type: null, id: null };
 let pendingPhoto = null; // base64 string | null
 let editingClassSetId = null; // class set currently open in editor
 
+/** Returns true if a seat can receive a student assignment. */
+function isSeatAssignable(seat) {
+  return seat.enabled && !seat.label;
+}
+
 /* ============================================================
    UNDO / REDO
 ============================================================ */
@@ -506,7 +511,7 @@ function assignStudents(method) {
   room.seats.forEach(s => { s.studentId = null; });
 
   // Only assignable seats (enabled and not labelled as a room object)
-  const seats = room.seats.filter(s => s.enabled && !s.label);
+  const seats = room.seats.filter(s => isSeatAssignable(s));
   if (!seats.length) { alert('No seats available in this room.'); return; }
 
   let students = [...visibleStudents()];
@@ -586,7 +591,7 @@ function handleDrop(targetSeatId) {
   if (!room) return;
 
   const target = seatById(room, targetSeatId);
-  if (!target || !target.enabled || target.label) return;
+  if (!target || !isSeatAssignable(target)) return;
 
   const { studentId, fromSeatId } = state.drag;
   if (!studentId) return;
@@ -863,7 +868,7 @@ function exportCSV() {
   const room = currentRoom();
   if (!room) { alert('Please select a room first.'); return; }
 
-  const assignedSeats = room.seats.filter(s => s.enabled && !s.label && s.studentId);
+  const assignedSeats = room.seats.filter(s => isSeatAssignable(s) && s.studentId);
   if (!assignedSeats.length) { alert('No students are assigned in this room.'); return; }
 
   const rows = [['Name', 'Row', 'Col', 'Cluster', 'Marks', 'Flags', 'Notes']];
@@ -906,7 +911,7 @@ function exportCSV() {
 ============================================================ */
 function computeStats(room) {
   if (!room) return null;
-  const seats    = room.seats.filter(s => s.enabled && !s.label);
+  const seats    = room.seats.filter(isSeatAssignable);
   const assigned = seats.filter(s => s.studentId);
   const students = visibleStudents();
   const seatedIds = new Set(assigned.map(s => s.studentId));
@@ -1149,7 +1154,7 @@ function updateCapacityBadge(room) {
   const badge = document.getElementById('capacity-badge');
   if (!badge) return;
   if (!room) { badge.textContent = ''; return; }
-  const seats  = room.seats.filter(s => s.enabled && !s.label);
+  const seats  = room.seats.filter(isSeatAssignable);
   const filled = seats.filter(s => s.studentId).length;
   const total  = seats.length;
   badge.textContent = `${filled} / ${total} seats`;
@@ -2647,7 +2652,7 @@ function initEvents() {
   document.addEventListener('keydown', e => {
     // Undo / Redo (work even inside inputs)
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'Z' && e.shiftKey))) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) {
       e.preventDefault(); redo(); return;
     }
 
