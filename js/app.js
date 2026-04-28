@@ -3,7 +3,7 @@
 /* ============================================================
    CONSTANTS
 ============================================================ */
-const CLUSTER_COLORS = [
+const CLUSTER_COLOURS = [
   '#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c',
   '#3498db','#9b59b6','#e91e63','#ff5722','#00bcd4',
   '#795548','#607d8b'
@@ -65,7 +65,7 @@ function seatByStudentId(room, studentId) {
   return room.seats.find(s => s.studentId === studentId) ?? null;
 }
 
-function avatarColor(gender) {
+function avatarColour(gender) {
   if (gender === 'male')   return '#0984e3';
   if (gender === 'female') return '#e84393';
   if (gender === 'other')  return '#6c5ce7';
@@ -178,11 +178,11 @@ function studentDelete(id) {
    CLUSTER MANAGEMENT
 ============================================================ */
 
-function clusterCreate(room, name = 'Cluster', color = null) {
+function clusterCreate(room, name = 'Cluster', colour = null) {
   const cl = {
     id:    uid(),
     name,
-    color: color || CLUSTER_COLORS[room.clusters.length % CLUSTER_COLORS.length]
+    colour: colour || CLUSTER_COLOURS[room.clusters.length % CLUSTER_COLOURS.length]
   };
   room.clusters.push(cl);
   return cl;
@@ -205,7 +205,7 @@ function autoDetectClusters(room) {
 
   const enabled = room.seats.filter(s => s.enabled);
   const visited = new Set();
-  let colorIdx  = 0;
+  let colourIdx  = 0;
 
   enabled.forEach(seed => {
     if (visited.has(seed.id)) return;
@@ -234,7 +234,7 @@ function autoDetectClusters(room) {
       const cl = clusterCreate(
         room,
         `Group ${room.clusters.length + 1}`,
-        CLUSTER_COLORS[colorIdx++ % CLUSTER_COLORS.length]
+        CLUSTER_COLOURS[colourIdx++ % CLUSTER_COLOURS.length]
       );
       component.forEach(s => { s.clusterId = cl.id; });
     }
@@ -496,7 +496,7 @@ function buildStudentCard(student, isSeated) {
   if (student.photo) {
     av.style.backgroundImage = `url(${student.photo})`;
   } else {
-    av.style.backgroundColor = avatarColor(student.gender);
+    av.style.backgroundColor = avatarColour(student.gender);
     av.textContent = student.name.charAt(0).toUpperCase();
   }
 
@@ -606,8 +606,8 @@ function renderGrid() {
         const cl = room.clusters.find(x => x.id === seat.clusterId);
         if (cl) {
           cell.classList.add('in-cluster');
-          cell.style.borderColor     = cl.color;
-          cell.style.backgroundColor = cl.color + '22';
+          cell.style.borderColor     = cl.colour;
+          cell.style.backgroundColor = cl.colour + '22';
         }
       }
 
@@ -620,8 +620,8 @@ function renderGrid() {
           seat.clusterId === state.activeClusterId) {
         const cl = room.clusters.find(x => x.id === state.activeClusterId);
         if (cl) {
-          cell.style.borderColor     = cl.color;
-          cell.style.backgroundColor = cl.color + '44';
+          cell.style.borderColor     = cl.colour;
+          cell.style.backgroundColor = cl.colour + '44';
         }
       }
 
@@ -716,7 +716,7 @@ function buildMiniStudent(student, seatId) {
   if (student.photo) {
     av.style.backgroundImage = `url(${student.photo})`;
   } else {
-    av.style.backgroundColor = avatarColor(student.gender);
+    av.style.backgroundColor = avatarColour(student.gender);
     av.textContent = student.name.charAt(0).toUpperCase();
   }
 
@@ -763,7 +763,7 @@ function renderClusterPanel() {
 
     const dot = document.createElement('div');
     dot.className = 'cluster-dot';
-    dot.style.backgroundColor = cl.color;
+    dot.style.backgroundColor = cl.colour;
 
     const name = document.createElement('span');
     name.className = 'cluster-name';
@@ -866,7 +866,7 @@ function openModal(type, id = null) {
     } else {
       preview.style.backgroundImage = '';
       preview.textContent = s ? s.name.charAt(0).toUpperCase() : '?';
-      preview.style.backgroundColor = s ? avatarColor(s.gender) : '#636e72';
+      preview.style.backgroundColor = s ? avatarColour(s.gender) : '#636e72';
     }
 
     // Constraint lists
@@ -880,8 +880,8 @@ function openModal(type, id = null) {
     document.getElementById('cluster-modal-title').textContent = id ? 'Edit Cluster' : 'New Cluster';
     const cl = id ? room.clusters.find(c => c.id === id) : null;
     document.getElementById('cluster-name-input').value  = cl?.name  ?? '';
-    document.getElementById('cluster-color-input').value =
-      cl?.color ?? CLUSTER_COLORS[room.clusters.length % CLUSTER_COLORS.length];
+    document.getElementById('cluster-colour-input').value =
+      cl?.colour ?? CLUSTER_COLOURS[room.clusters.length % CLUSTER_COLOURS.length];
     showModalEl('cluster-modal');
   }
 }
@@ -996,13 +996,13 @@ function saveClusterModal() {
 
   const name  = document.getElementById('cluster-name-input').value.trim();
   if (!name) { alert('Please enter a cluster name.'); return; }
-  const color = document.getElementById('cluster-color-input').value;
+  const colour = document.getElementById('cluster-colour-input').value;
 
   if (editCtx.id) {
     const cl = room.clusters.find(c => c.id === editCtx.id);
-    if (cl) { cl.name = name; cl.color = color; }
+    if (cl) { cl.name = name; cl.colour = colour; }
   } else {
-    const cl = clusterCreate(room, name, color);
+    const cl = clusterCreate(room, name, colour);
     state.activeClusterId = cl.id;
     // Switch to cluster mode to make it easy to assign seats
     setMode('cluster');
@@ -1193,7 +1193,7 @@ function initEvents() {
 }
 
 /* ============================================================
-   INITIALIZATION
+   INITIALISATION
 ============================================================ */
 function init() {
   initEvents();

@@ -141,7 +141,7 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 }
 .panel-left  { border-right: 1px solid var(--border); }
 .panel-right { border-left:  1px solid var(--border); }
-.panel-center{ flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.panel-centre{ flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 
 .panel-header {
   padding: 10px 14px;
