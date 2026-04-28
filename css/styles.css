@@ -566,3 +566,83 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 .classset-edit-col {
   flex: 1; display: flex; flex-direction: column; min-width: 0;
 }
+
+/* ============================================================
+   STUDENT SEARCH BAR
+============================================================ */
+.student-search-bar {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #f8f9fa;
+  flex-shrink: 0;
+}
+.student-search-bar input {
+  width: 100%; padding: 5px 9px;
+  border: 1px solid var(--border); border-radius: 5px;
+  font-size: 12px; background: var(--surface); color: var(--text);
+  transition: border .15s;
+}
+.student-search-bar input:focus { outline: none; border-color: var(--primary); }
+
+/* ============================================================
+   PRINT STYLES
+============================================================ */
+@media print {
+  /* Hide all interactive UI chrome */
+  .header-right,
+  .room-bar,
+  .toolbar,
+  .panel-left,
+  .panel-right,
+  .room-config,
+  .seat-info-bar,
+  .autosave-badge { display: none !important; }
+
+  /* Let the page scroll fully */
+  html, body {
+    overflow: visible !important;
+    height: auto !important;
+    background: white !important;
+  }
+
+  /* Dark header → white for print */
+  header {
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    border-bottom: 2px solid #333 !important;
+  }
+  header h1, .logo { color: black !important; }
+
+  .app-body {
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  .panel-centre {
+    width: 100% !important;
+    overflow: visible !important;
+  }
+
+  /* Room title only, no config controls */
+  .room-header {
+    border-bottom: 1px solid #ccc !important;
+    padding: 8px 14px !important;
+  }
+
+  .grid-scroll {
+    overflow: visible !important;
+    flex: none !important;
+    padding: 16px !important;
+    justify-content: flex-start !important;
+  }
+
+  /* Preserve seat colours */
+  .seat-cell,
+  .mini-avatar,
+  .cluster-dot {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

@@ -154,6 +154,44 @@ function roomUnarchive(id) {
   if (room) room.archived = false;
 }
 
+/**
+ * Duplicate a room: copies layout, clusters, and seat enabled/cluster state,
+ * but does NOT copy student assignments.
+ */
+function roomDuplicate(room) {
+  // Map old cluster IDs → new cluster IDs so seat references stay correct
+  const clusterIdMap = {};
+  const newClusters = room.clusters.map(cl => {
+    const newId = uid();
+    clusterIdMap[cl.id] = newId;
+    return { ...cl, id: newId };
+  });
+
+  const newSeats = room.seats.map(s => ({
+    ...s,
+    id:        uid(),
+    studentId: null, // clear assignments
+    clusterId: s.clusterId ? (clusterIdMap[s.clusterId] ?? null) : null
+  }));
+
+  const newRoom = {
+    id:             uid(),
+    name:           room.name + ' (copy)',
+    rows:           room.rows,
+    cols:           room.cols,
+    seats:          newSeats,
+    clusters:       newClusters,
+    archived:       false,
+    layoutMode:     room.layoutMode,
+    frontDirection: room.frontDirection,
+    canvasW:        room.canvasW,
+    canvasH:        room.canvasH
+  };
+
+  state.rooms.push(newRoom);
+  return newRoom;
+}
+
 /** Convert a grid-layout room to freeform, placing seats at their grid pixel positions. */
 function roomSwitchToFreeform(room) {
   room.seats.forEach(s => {
@@ -589,6 +627,19 @@ function loadJSON(data) {
 }
 
 /**
+ * Open the browser's print/save-as-PDF dialog for the current seating plan.
+ * The @media print CSS rules in styles.css hide the UI chrome so only the
+ * room grid is visible in the printed output.
+ */
+function printSeatingPlan() {
+  if (!currentRoom()) {
+    alert('Please select a room to print.');
+    return;
+  }
+  window.print();
+}
+
+/**
  * Import students from a JSON array.
  * Supports constraint references by student name (resolved to IDs).
  */
@@ -778,7 +829,12 @@ function renderStudentList() {
   const el = document.getElementById('student-list');
   el.innerHTML = '';
 
-  const shown = visibleStudents();
+  const query = (document.getElementById('student-search')?.value ?? '').toLowerCase().trim();
+  const visible = visibleStudents();
+  // Apply search filter on top of class-set filter
+  const shown = query
+    ? visible.filter(s => s.name.toLowerCase().includes(query))
+    : visible;
 
   if (!state.students.length) {
     el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 JSON" / "📥 CSV" to import.</div>';
@@ -786,7 +842,10 @@ function renderStudentList() {
   }
 
   if (!shown.length) {
-    el.innerHTML = '<div class="empty-msg">No students in this class set.<br>Manage class sets using ⚙️.</div>';
+    const msg = query
+      ? 'No students match your search.'
+      : 'No students in this class set.<br>Manage class sets using ⚙️.';
+    el.innerHTML = `<div class="empty-msg">${msg}</div>`;
     return;
   }
 
@@ -1072,11 +1131,16 @@ function renderFreeformGrid(room, grid) {
     grid.appendChild(cell);
   });
 
-  // Click on empty canvas in layout mode → add a desk
+  // Left-click on empty canvas in layout mode → add a desk
   if (state.mode === 'layout') {
     grid.classList.add('layout-canvas');
+
+    // Prevent the browser context menu appearing over the canvas
+    grid.addEventListener('contextmenu', e => e.preventDefault());
+
     grid.addEventListener('pointerdown', e => {
       if (e.target !== grid) return;
+      if (e.button !== 0) return; // left button only — ignore right-click
       e.preventDefault();
       const rect = grid.getBoundingClientRect();
       const x = Math.round(Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF)));
@@ -1643,6 +1707,8 @@ function setMode(mode) {
 function initEvents() {
 
   // ── Save / Load ──────────────────────────────────────────
+  document.getElementById('print-btn').addEventListener('click', printSeatingPlan);
+
   document.getElementById('save-btn').addEventListener('click', saveJSON);
 
   document.getElementById('load-btn').addEventListener('click', () =>
@@ -1707,6 +1773,15 @@ function initEvents() {
       roomDelete(room.id);
       renderAll();
     }
+  });
+
+  document.getElementById('duplicate-room-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    const copy = roomDuplicate(room);
+    state.currentRoomId = copy.id;
+    renderAll();
+    scheduleAutosave();
   });
 
   // ── Front direction buttons ───────────────────────────────
@@ -1829,6 +1904,11 @@ function initEvents() {
   // ── Class set selector ───────────────────────────────────
   document.getElementById('class-set-select').addEventListener('change', e => {
     state.activeClassSetId = e.target.value || null;
+    renderStudentList();
+  });
+
+  // ── Student search ───────────────────────────────────────
+  document.getElementById('student-search').addEventListener('input', () => {
     renderStudentList();
   });
 

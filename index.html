@@ -16,6 +16,7 @@
     <span class="autosave-badge" id="autosave-badge"></span>
   </div>
   <div class="header-right">
+    <button class="btn btn-secondary" id="print-btn">🖨 Print</button>
     <button class="btn btn-secondary" id="save-btn">💾 Save JSON</button>
     <button class="btn btn-secondary" id="load-btn">📂 Load JSON</button>
     <input type="file" id="load-file" accept=".json" style="display:none" />
@@ -79,6 +80,9 @@
         <input type="file" id="import-csv-file" accept=".csv" style="display:none" />
       </div>
     </div>
+    <div class="student-search-bar">
+      <input type="text" id="student-search" placeholder="🔍 Search students…" autocomplete="off" />
+    </div>
     <div class="student-list" id="student-list"></div>
   </aside>
 
@@ -105,6 +109,7 @@
         <button class="btn btn-sm dir-btn"         data-dir="bottom" title="Front of class at bottom">↓</button>
         <button class="btn btn-sm dir-btn"         data-dir="left"   title="Front of class at left"  >←</button>
         <button class="btn btn-secondary btn-sm" id="layout-toggle-btn">⊞ Freeform</button>
+        <button class="btn btn-secondary  btn-sm" id="duplicate-room-btn">⧉ Duplicate</button>
         <button class="btn btn-warning    btn-sm" id="archive-room-btn">📦 Archive</button>
         <button class="btn btn-danger    btn-sm" id="delete-room-btn">🗑 Delete Room</button>
       </div>
