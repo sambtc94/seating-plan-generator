@@ -15,17 +15,21 @@ const CLUSTER_COLOURS = [
 const state = {
   rooms:         [],   // Room[]
   students:      [],   // Student[]
+  classSets:     [],   // ClassSet[]
   currentRoomId: null, // string | null
 
   // UI-only (not persisted)
-  mode:            'move',   // 'move' | 'toggle' | 'cluster'
-  activeClusterId: null,     // string | null
+  mode:              'move',   // 'move' | 'toggle' | 'cluster'
+  activeClusterId:   null,     // string | null
+  activeClassSetId:  null,     // string | null — filter for student panel
+  showArchived:      false,    // show archived room tabs
   drag: { studentId: null, fromSeatId: null }
 };
 
 // Transient edit context for modals
 let editCtx = { type: null, id: null };
 let pendingPhoto = null; // base64 string | null
+let editingClassSetId = null; // class set currently open in editor
 
 /* ============================================================
    UTILITIES
@@ -85,7 +89,7 @@ function avatarColour(gender) {
  */
 function roomCreate(name = 'New Room', rows = 5, cols = 6) {
   const id = uid();
-  const room = { id, name, rows, cols, seats: [], clusters: [] };
+  const room = { id, name, rows, cols, seats: [], clusters: [], archived: false };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       room.seats.push(makeSeat(id, r, c));
@@ -108,8 +112,21 @@ function makeSeat(roomId, r, c) {
 function roomDelete(id) {
   state.rooms = state.rooms.filter(r => r.id !== id);
   if (state.currentRoomId === id) {
-    state.currentRoomId = state.rooms[0]?.id ?? null;
+    state.currentRoomId = state.rooms.find(r => !r.archived)?.id ?? state.rooms[0]?.id ?? null;
   }
+}
+
+function roomArchive(id) {
+  const room = state.rooms.find(r => r.id === id);
+  if (room) room.archived = true;
+  if (state.currentRoomId === id) {
+    state.currentRoomId = state.rooms.find(r => !r.archived)?.id ?? null;
+  }
+}
+
+function roomUnarchive(id) {
+  const room = state.rooms.find(r => r.id === id);
+  if (room) room.archived = false;
 }
 
 /**
@@ -242,6 +259,35 @@ function autoDetectClusters(room) {
 }
 
 /* ============================================================
+   CLASS SET MANAGEMENT
+============================================================ */
+
+function classSetCreate(name = 'New Class Set', studentIds = []) {
+  const cs = { id: uid(), name, studentIds: [...studentIds] };
+  state.classSets.push(cs);
+  return cs;
+}
+
+function classSetUpdate(id, data) {
+  const cs = state.classSets.find(x => x.id === id);
+  if (cs) Object.assign(cs, data);
+}
+
+function classSetDelete(id) {
+  state.classSets = state.classSets.filter(x => x.id !== id);
+  if (state.activeClassSetId === id) state.activeClassSetId = null;
+  if (editingClassSetId === id) editingClassSetId = null;
+}
+
+/** Return the students that belong to the active class set, or all students. */
+function visibleStudents() {
+  if (!state.activeClassSetId) return state.students;
+  const cs = state.classSets.find(x => x.id === state.activeClassSetId);
+  if (!cs) return state.students;
+  return state.students.filter(s => cs.studentIds.includes(s.id));
+}
+
+/* ============================================================
    SEATING ASSIGNMENT
 ============================================================ */
 
@@ -261,7 +307,7 @@ function assignStudents(method) {
   const seats = room.seats.filter(s => s.enabled);
   if (!seats.length) { alert('No seats available in this room.'); return; }
 
-  let students = [...state.students];
+  let students = [...visibleStudents()];
   if (!students.length) { alert('No students to assign.'); return; }
 
   // ── Sort students ──────────────────────────────────────────
@@ -362,11 +408,74 @@ function resetDrag() {
    SAVE / LOAD
 ============================================================ */
 
+const AUTOSAVE_KEY = 'spg_autosave_v2';
+
+function autosave() {
+  try {
+    const data = {
+      version:       2,
+      rooms:         state.rooms,
+      students:      state.students,
+      classSets:     state.classSets,
+      currentRoomId: state.currentRoomId
+    };
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
+    showAutosaveBadge('✔ Saved');
+  } catch (e) {
+    // localStorage may be full or unavailable — silently ignore
+  }
+}
+
+let _autosaveTimer = null;
+function scheduleAutosave() {
+  clearTimeout(_autosaveTimer);
+  _autosaveTimer = setTimeout(autosave, 600);
+}
+
+function showAutosaveBadge(text) {
+  const badge = document.getElementById('autosave-badge');
+  if (!badge) return;
+  badge.textContent = text;
+  badge.classList.add('visible');
+  clearTimeout(badge._fadeTimer);
+  badge._fadeTimer = setTimeout(() => badge.classList.remove('visible'), 2500);
+}
+
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    return applyStateData(data);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Apply a serialised state object (v1 or v2) — returns true on success. */
+function applyStateData(data) {
+  if (!data || (data.version !== 1 && data.version !== 2)) return false;
+  state.rooms         = (data.rooms    || []).map(normaliseRoom);
+  state.students      = data.students  || [];
+  state.classSets     = data.classSets || [];
+  state.currentRoomId = data.currentRoomId ?? state.rooms.find(r => !r.archived)?.id ?? null;
+  state.mode              = 'move';
+  state.activeClusterId   = null;
+  state.activeClassSetId  = null;
+  return true;
+}
+
+/** Ensure a room object has all expected fields (backwards-compat). */
+function normaliseRoom(room) {
+  return Object.assign({ archived: false, clusters: [], seats: [] }, room);
+}
+
 function saveJSON() {
   const data = {
-    version: 1,
+    version:       2,
     rooms:         state.rooms,
     students:      state.students,
+    classSets:     state.classSets,
     currentRoomId: state.currentRoomId
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -381,14 +490,9 @@ function saveJSON() {
 }
 
 function loadJSON(data) {
-  if (!data || data.version !== 1) {
-    throw new Error('Unsupported or invalid file format (expected version 1).');
+  if (!applyStateData(data)) {
+    throw new Error('Unsupported or invalid file format (expected version 1 or 2).');
   }
-  state.rooms         = data.rooms    || [];
-  state.students      = data.students || [];
-  state.currentRoomId = data.currentRoomId ?? state.rooms[0]?.id ?? null;
-  state.mode          = 'move';
-  state.activeClusterId = null;
   renderAll();
 }
 
@@ -428,6 +532,40 @@ function importStudents(arr) {
   });
 }
 
+/**
+ * Import students from a CSV string.
+ * Expected header row: name[,gender[,marks]]
+ * Extra columns are ignored.
+ */
+function importStudentsCSV(csvText) {
+  const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) throw new Error('CSV must have a header row and at least one data row.');
+
+  // Parse header to find column indices (case-insensitive)
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const col = name => headers.indexOf(name);
+  const iName   = col('name');
+  const iGender = col('gender');
+  const iMarks  = col('marks');
+
+  if (iName === -1) throw new Error('CSV must have a "name" column.');
+
+  let imported = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(',').map(c => c.trim());
+    const name = cells[iName];
+    if (!name) continue;
+    studentCreate({
+      name,
+      gender: iGender !== -1 ? cells[iGender] ?? '' : '',
+      marks:  iMarks  !== -1 && cells[iMarks] !== '' ? parseFloat(cells[iMarks]) : null
+    });
+    imported++;
+  }
+  if (!imported) throw new Error('No valid student rows found in CSV.');
+  return imported;
+}
+
 /* ============================================================
    RENDER — TABS
 ============================================================ */
@@ -435,12 +573,23 @@ function renderTabs() {
   const el = document.getElementById('room-tabs');
   el.innerHTML = '';
 
+  const archivedCount = state.rooms.filter(r => r.archived).length;
+  const toggleBtn = document.getElementById('toggle-archived-btn');
+  if (toggleBtn) {
+    toggleBtn.textContent = `📦 Archived${archivedCount ? ` (${archivedCount})` : ''}`;
+    toggleBtn.classList.toggle('active-archived', state.showArchived);
+  }
+
   state.rooms.forEach(room => {
+    if (room.archived && !state.showArchived) return;
+
     const btn = document.createElement('button');
-    btn.className = 'room-tab' + (room.id === state.currentRoomId ? ' active' : '');
+    btn.className = 'room-tab' +
+      (room.id === state.currentRoomId ? ' active' : '') +
+      (room.archived ? ' archived-tab' : '');
 
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = room.name;
+    nameSpan.textContent = (room.archived ? '📦 ' : '') + room.name;
 
     const editIcon = document.createElement('span');
     editIcon.className = 'tab-edit';
@@ -459,19 +608,46 @@ function renderTabs() {
 }
 
 /* ============================================================
-   RENDER — STUDENT LIST
+   RENDER — STUDENT LIST + CLASS SET BAR
 ============================================================ */
+function renderClassSetBar() {
+  const sel = document.getElementById('class-set-select');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All Students</option>';
+  state.classSets.forEach(cs => {
+    const opt = document.createElement('option');
+    opt.value = cs.id;
+    opt.textContent = `${cs.name} (${cs.studentIds.length})`;
+    sel.appendChild(opt);
+  });
+  // Restore selection
+  if (state.activeClassSetId && [...sel.options].some(o => o.value === state.activeClassSetId)) {
+    sel.value = state.activeClassSetId;
+  } else {
+    sel.value = '';
+    state.activeClassSetId = null;
+  }
+}
+
 function renderStudentList() {
   const el = document.getElementById('student-list');
   el.innerHTML = '';
 
+  const shown = visibleStudents();
+
   if (!state.students.length) {
-    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 Import" to import from JSON.</div>';
+    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 JSON" / "📥 CSV" to import.</div>';
+    return;
+  }
+
+  if (!shown.length) {
+    el.innerHTML = '<div class="empty-msg">No students in this class set.<br>Manage class sets using ⚙️.</div>';
     return;
   }
 
   const room = currentRoom();
-  state.students.forEach(student => {
+  shown.forEach(student => {
     const seatedHere = room ? !!seatByStudentId(room, student.id) : false;
     el.appendChild(buildStudentCard(student, seatedHere));
   });
@@ -569,6 +745,13 @@ function renderGrid() {
   document.getElementById('room-name-display').textContent = room.name;
   document.getElementById('rows-input').value = room.rows;
   document.getElementById('cols-input').value = room.cols;
+
+  // Update archive button label
+  const archBtn = document.getElementById('archive-room-btn');
+  if (archBtn) {
+    archBtn.textContent = room.archived ? '📤 Unarchive' : '📦 Archive';
+    archBtn.title = room.archived ? 'Restore this room' : 'Archive this room';
+  }
 
   grid.style.gridTemplateColumns = `repeat(${room.cols}, 78px)`;
   grid.style.gridTemplateRows    = `repeat(${room.rows}, 78px)`;
@@ -824,9 +1007,11 @@ function renderClusterPanel() {
 ============================================================ */
 function renderAll() {
   renderTabs();
+  renderClassSetBar();
   renderStudentList();
   renderGrid();
   renderClusterPanel();
+  scheduleAutosave();
 }
 
 /* ============================================================
@@ -1013,6 +1198,108 @@ function saveClusterModal() {
 }
 
 /* ============================================================
+   CLASS SET MODAL
+============================================================ */
+function openClassSetModal() {
+  editingClassSetId = null;
+  renderClassSetModalList();
+  showModalEl('classset-modal');
+}
+
+function renderClassSetModalList() {
+  const list = document.getElementById('classset-list');
+  list.innerHTML = '';
+
+  if (!state.classSets.length) {
+    list.innerHTML = '<div class="empty-msg">No class sets yet.<br>Click "＋ New" to create one.</div>';
+  }
+
+  state.classSets.forEach(cs => {
+    const item = document.createElement('div');
+    item.className = 'classset-list-item' + (cs.id === editingClassSetId ? ' active' : '');
+    item.textContent = cs.name;
+    item.dataset.id = cs.id;
+    item.addEventListener('click', () => {
+      editingClassSetId = cs.id;
+      renderClassSetModalList();
+      openClassSetEditor(cs.id);
+    });
+    list.appendChild(item);
+  });
+}
+
+function openClassSetEditor(id) {
+  const cs = state.classSets.find(x => x.id === id);
+  document.getElementById('classset-no-selection').style.display = 'none';
+  const editor = document.getElementById('classset-editor');
+  editor.style.display = 'block';
+
+  document.getElementById('classset-name-input').value = cs?.name ?? '';
+
+  // Student checkboxes
+  const sl = document.getElementById('classset-student-list');
+  sl.innerHTML = '';
+  if (!state.students.length) {
+    sl.innerHTML = '<div class="empty-msg">No students yet.</div>';
+    return;
+  }
+  state.students.forEach(s => {
+    const label = document.createElement('label');
+    label.className = 'chk-label';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = s.id;
+    cb.checked = cs ? cs.studentIds.includes(s.id) : false;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(s.name));
+    sl.appendChild(label);
+  });
+}
+
+function saveClassSetEditor() {
+  const name = document.getElementById('classset-name-input').value.trim();
+  if (!name) { alert('Please enter a class set name.'); return; }
+  const studentIds = [
+    ...document.querySelectorAll('#classset-student-list input[type="checkbox"]:checked')
+  ].map(cb => cb.value);
+
+  if (editingClassSetId) {
+    classSetUpdate(editingClassSetId, { name, studentIds });
+  } else {
+    const cs = classSetCreate(name, studentIds);
+    editingClassSetId = cs.id;
+  }
+  renderClassSetModalList();
+  renderClassSetBar();
+  renderStudentList();
+  scheduleAutosave();
+  // Update editor to reflect saved state
+  openClassSetEditor(editingClassSetId);
+}
+
+function newClassSetFromModal() {
+  editingClassSetId = null;
+  document.getElementById('classset-no-selection').style.display = 'none';
+  const editor = document.getElementById('classset-editor');
+  editor.style.display = 'block';
+  document.getElementById('classset-name-input').value = '';
+  const sl = document.getElementById('classset-student-list');
+  sl.innerHTML = '';
+  state.students.forEach(s => {
+    const label = document.createElement('label');
+    label.className = 'chk-label';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = s.id;
+    cb.checked = false;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(s.name));
+    sl.appendChild(label);
+  });
+  renderClassSetModalList();
+}
+
+/* ============================================================
    MODE SWITCHING
 ============================================================ */
 function setMode(mode) {
@@ -1055,6 +1342,11 @@ function initEvents() {
   document.getElementById('add-room-btn').addEventListener('click',
     () => openModal('room'));
 
+  document.getElementById('toggle-archived-btn').addEventListener('click', () => {
+    state.showArchived = !state.showArchived;
+    renderTabs();
+  });
+
   document.getElementById('resize-btn').addEventListener('click', () => {
     const room = currentRoom();
     if (!room) return;
@@ -1066,6 +1358,21 @@ function initEvents() {
     roomResize(room, rows, cols);
     renderGrid();
     renderClusterPanel();
+    scheduleAutosave();
+  });
+
+  document.getElementById('archive-room-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    if (room.archived) {
+      roomUnarchive(room.id);
+      renderAll();
+    } else {
+      if (confirm(`Archive room "${room.name}"?\nIt will be hidden from the tabs but can be restored.`)) {
+        roomArchive(room.id);
+        renderAll();
+      }
+    }
   });
 
   document.getElementById('delete-room-btn').addEventListener('click', () => {
@@ -1088,6 +1395,7 @@ function initEvents() {
     assignStudents(method);
     renderGrid();
     renderStudentList();
+    scheduleAutosave();
   });
 
   document.getElementById('clear-btn').addEventListener('click', () => {
@@ -1097,6 +1405,7 @@ function initEvents() {
       room.seats.forEach(s => { s.studentId = null; });
       renderGrid();
       renderStudentList();
+      scheduleAutosave();
     }
   });
 
@@ -1104,7 +1413,7 @@ function initEvents() {
   document.getElementById('add-student-btn').addEventListener('click',
     () => openModal('student'));
 
-  document.getElementById('import-btn').addEventListener('click',
+  document.getElementById('import-json-btn').addEventListener('click',
     () => document.getElementById('import-file').click()
   );
   document.getElementById('import-file').addEventListener('change', e => {
@@ -1114,7 +1423,7 @@ function initEvents() {
     reader.onload = evt => {
       try {
         importStudents(JSON.parse(evt.target.result));
-        renderStudentList();
+        renderAll();
         alert('Students imported successfully.');
       } catch (err) {
         alert('Import error: ' + err.message);
@@ -1122,6 +1431,54 @@ function initEvents() {
     };
     reader.readAsText(file);
     e.target.value = '';
+  });
+
+  document.getElementById('import-csv-btn').addEventListener('click',
+    () => document.getElementById('import-csv-file').click()
+  );
+  document.getElementById('import-csv-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      try {
+        const count = importStudentsCSV(evt.target.result);
+        renderAll();
+        alert(`${count} student${count !== 1 ? 's' : ''} imported from CSV.`);
+      } catch (err) {
+        alert('CSV import error: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // ── Class set selector ───────────────────────────────────
+  document.getElementById('class-set-select').addEventListener('change', e => {
+    state.activeClassSetId = e.target.value || null;
+    renderStudentList();
+  });
+
+  document.getElementById('manage-class-sets-btn').addEventListener('click', () => {
+    openClassSetModal();
+  });
+
+  // Class set modal buttons
+  document.getElementById('new-classset-btn').addEventListener('click', newClassSetFromModal);
+  document.getElementById('classset-save-btn').addEventListener('click', saveClassSetEditor);
+  document.getElementById('classset-delete-btn').addEventListener('click', () => {
+    if (!editingClassSetId) return;
+    const cs = state.classSets.find(x => x.id === editingClassSetId);
+    if (confirm(`Delete class set "${cs?.name}"?`)) {
+      classSetDelete(editingClassSetId);
+      editingClassSetId = null;
+      document.getElementById('classset-editor').style.display = 'none';
+      document.getElementById('classset-no-selection').style.display = '';
+      renderClassSetModalList();
+      renderClassSetBar();
+      renderStudentList();
+      scheduleAutosave();
+    }
   });
 
   // ── Photo selection ──────────────────────────────────────
@@ -1153,6 +1510,7 @@ function initEvents() {
       autoDetectClusters(room);
       renderClusterPanel();
       renderGrid();
+      scheduleAutosave();
     }
   });
 
@@ -1198,9 +1556,12 @@ function initEvents() {
 function init() {
   initEvents();
 
-  // Create a default room so the app is immediately usable
-  const room = roomCreate('Classroom A', 5, 6);
-  state.currentRoomId = room.id;
+  // Try to restore from localStorage; fall back to a default room
+  const restored = loadFromStorage();
+  if (!restored) {
+    const room = roomCreate('Classroom A', 5, 6);
+    state.currentRoomId = room.id;
+  }
 
   renderAll();
 }
