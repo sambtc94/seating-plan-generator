@@ -3289,11 +3289,32 @@ function initEvents() {
 }
 
 /* ============================================================
+   MOBILE NAVIGATION
+============================================================ */
+function initMobileNav() {
+  const appBody = document.querySelector('.app-body');
+  const tabs = document.querySelectorAll('.mobile-tab');
+
+  // Set default active panel
+  appBody.dataset.activePanel = 'room';
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const panel = tab.dataset.panel;
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      appBody.dataset.activePanel = panel;
+    });
+  });
+}
+
+/* ============================================================
    INITIALISATION
 ============================================================ */
 function init() {
   applyDarkModePreference();
   initEvents();
+  initMobileNav();
   updateUndoRedoBtns();
 
   // Try to restore from localStorage; fall back to a default room
