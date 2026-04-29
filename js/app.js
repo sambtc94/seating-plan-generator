@@ -1038,36 +1038,26 @@ function printSeatingPlan() {
  * Import students from a JSON array.
  * Supports constraint references by student name (resolved to IDs).
  */
-function importStudents(arr) {
-  if (!Array.isArray(arr)) throw new Error('Expected a JSON array of student objects.');
-
-  const nameMap = {};
-
-  // Pass 1: create students
-  const pairs = arr.map(raw => {
-    const s = studentCreate({
-      name:   raw.name,
-      gender: raw.gender,
-      marks:  raw.marks,
-      photo:  raw.photo
-    });
-    nameMap[raw.name] = s.id;
-    return { s, raw };
+/* ============================================================
+   CSV EXPORT (STUDENTS)
+============================================================ */
+function exportStudentsCSV() {
+  const rows = [['name', 'gender', 'marks']];
+  state.students.forEach(s => {
+    rows.push([s.name, s.gender || '', s.marks != null ? String(s.marks) : '']);
   });
-
-  // Pass 2: resolve constraint references (by name or existing ID)
-  pairs.forEach(({ s, raw }) => {
-    if (Array.isArray(raw.sitNear)) {
-      s.sitNear = raw.sitNear
-        .map(n => nameMap[n] ?? (state.students.find(x => x.id === n)?.id))
-        .filter(Boolean);
-    }
-    if (Array.isArray(raw.doNotSitNear)) {
-      s.doNotSitNear = raw.doNotSitNear
-        .map(n => nameMap[n] ?? (state.students.find(x => x.id === n)?.id))
-        .filter(Boolean);
-    }
-  });
+  const csv = rows.map(r =>
+    r.map(f => (/[,"\r\n]/.test(f) ? `"${f.replace(/"/g, '""')}"` : f)).join(',')
+  ).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'students.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**
@@ -1170,23 +1160,7 @@ function parseCSVRows(csvText) {
 }
 
 /* ============================================================
-   CSV TEMPLATE DOWNLOAD
-============================================================ */
-function downloadCSVTemplate() {
-  const csvContent = 'name,gender,marks\nAlice,female,85\nBob,male,72\n';
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = 'students_template.csv';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-/* ============================================================
-   CSV EXPORT
+   CSV EXPORT (SEATING)
 ============================================================ */
 function exportCSV() {
   const room = currentRoom();
@@ -1653,7 +1627,7 @@ function renderStudentList() {
     : visible;
 
   if (!state.students.length) {
-    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 JSON" / "📥 CSV" to import.</div>';
+    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 CSV" to import.</div>';
     return;
   }
 
@@ -2970,30 +2944,10 @@ function initEvents() {
   document.getElementById('add-student-btn').addEventListener('click',
     () => openModal('student'));
 
-  document.getElementById('import-json-btn').addEventListener('click',
-    () => document.getElementById('import-file').click()
-  );
-  document.getElementById('import-file').addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = evt => {
-      try {
-        importStudents(JSON.parse(evt.target.result));
-        renderAll();
-        alert('Students imported successfully.');
-      } catch (err) {
-        alert('Import error: ' + err.message);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  });
-
   document.getElementById('import-csv-btn').addEventListener('click',
     () => document.getElementById('import-csv-file').click()
   );
-  document.getElementById('csv-template-btn').addEventListener('click', downloadCSVTemplate);
+  document.getElementById('export-students-btn').addEventListener('click', exportStudentsCSV);
   document.getElementById('import-csv-file').addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
