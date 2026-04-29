@@ -377,6 +377,14 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
   background: var(--surface); transition: box-shadow .15s;
 }
 .cluster-item:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.cluster-item.cluster-dragging { opacity: .4; }
+.cluster-item.cluster-drag-over { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary); }
+
+.cluster-drag-handle {
+  font-size: 14px; color: var(--text-muted); cursor: grab; flex-shrink: 0;
+  padding: 0 2px; user-select: none;
+}
+.cluster-drag-handle:active { cursor: grabbing; }
 
 .cluster-dot   { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; }
 .cluster-name  { font-size: 13px; font-weight: 500; flex: 1; min-width: 0; }
@@ -1105,3 +1113,35 @@ kbd {
 body.dark-mode .help-toc { background: var(--bg); border-color: var(--border); }
 body.dark-mode .help-section { border-color: var(--border); }
 body.dark-mode kbd { background: var(--surface); border-color: var(--border); }
+
+/* ============================================================
+   TEMPLATES MODAL
+============================================================ */
+.templates-actions-bar {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.templates-list { display: flex; flex-direction: column; gap: 6px; }
+
+.template-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--surface);
+  cursor: pointer; transition: box-shadow .15s, border-color .15s;
+}
+.template-item:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.template-item.template-selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(9,132,227,.2);
+}
+
+.template-icon { font-size: 18px; flex-shrink: 0; }
+
+.template-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.template-name { font-size: 13px; font-weight: 500; }
+.template-meta { font-size: 11px; color: var(--text-muted); }
+
+.template-actions { display: flex; gap: 2px; flex-shrink: 0; }
+
+body.dark-mode .template-item { background: var(--surface); border-color: var(--border); }

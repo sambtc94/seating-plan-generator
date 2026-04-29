@@ -30,6 +30,7 @@
 <div class="room-bar">
   <div class="room-tabs" id="room-tabs"></div>
   <button class="btn btn-primary btn-sm" id="add-room-btn">＋ New Class</button>
+  <button class="btn btn-secondary btn-sm" id="templates-tab-btn" title="Manage room layout templates">📐 Templates</button>
   <button class="btn btn-secondary btn-sm" id="toggle-archived-btn" title="Show / hide archived classes">📦 Archived</button>
 </div>
 
@@ -127,8 +128,6 @@
         <button class="btn btn-sm dir-btn"         data-dir="left"   title="Front of class at left"  >←</button>
         <button class="btn btn-secondary btn-sm" id="layout-toggle-btn" style="display:none">⊞ Freeform</button>
         <button class="btn btn-secondary  btn-sm" id="duplicate-room-btn">⧉ Duplicate</button>
-        <button class="btn btn-secondary  btn-sm" id="save-template-btn" title="Save this room layout as a reusable template">💾 Template</button>
-        <button class="btn btn-secondary  btn-sm" id="apply-template-btn" title="Apply a saved layout template to this room">📐 Apply</button>
         <button class="btn btn-warning    btn-sm" id="archive-room-btn">📦 Archive</button>
         <button class="btn btn-danger    btn-sm" id="delete-room-btn">🗑 Delete Room</button>
       </div>
@@ -367,6 +366,24 @@
     <div class="modal-body" id="help-body"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" data-close="help-modal">Close</button>
+    </div>
+  </div>
+
+  <!-- TEMPLATES MODAL -->
+  <div class="modal modal-wide" id="templates-modal">
+    <div class="modal-header">
+      <h3>📐 Room Layout Templates</h3>
+      <button class="modal-close" data-close="templates-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="templates-actions-bar">
+        <button class="btn btn-primary btn-sm" id="tmpl-save-current-btn" title="Save the current room layout as a new template">💾 Save Current Room as Template</button>
+        <button class="btn btn-secondary btn-sm" id="tmpl-apply-btn" title="Apply a template to the current room" disabled>📐 Apply to Current Room</button>
+      </div>
+      <div id="templates-list" class="templates-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="templates-modal">Close</button>
     </div>
   </div>
 
