@@ -863,6 +863,22 @@ function parseCSVRows(csvText) {
 }
 
 /* ============================================================
+   CSV TEMPLATE DOWNLOAD
+============================================================ */
+function downloadCSVTemplate() {
+  const csvContent = 'name,gender,marks\nAlice,F,85\nBob,M,72\n';
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'students_template.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ============================================================
    CSV EXPORT
 ============================================================ */
 function exportCSV() {
@@ -2510,6 +2526,7 @@ function initEvents() {
   document.getElementById('import-csv-btn').addEventListener('click',
     () => document.getElementById('import-csv-file').click()
   );
+  document.getElementById('csv-template-btn').addEventListener('click', downloadCSVTemplate);
   document.getElementById('import-csv-file').addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
