@@ -982,6 +982,7 @@ function renderClusterPanel() {
     handle.className = 'cluster-drag-handle';
     handle.textContent = '⠿';
     handle.title = 'Drag to reorder';
+    handle.setAttribute('aria-label', 'Drag to reorder cluster');
 
     const dot = document.createElement('div');
     dot.className = 'cluster-dot';
