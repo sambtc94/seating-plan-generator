@@ -203,19 +203,19 @@ function roomCreate(name = 'New Class', rows = 5, cols = 6) {
     id, name, rows, cols,
     seats: [], clusters: [],
     archived:       false,
-    layoutMode:     'grid',   // will be converted to freeform below
-    frontDirection: 'top',    // 'top' | 'right' | 'bottom' | 'left'
+    layoutMode:     'freeform', // all rooms are freeform
+    frontDirection: 'top',      // 'top' | 'right' | 'bottom' | 'left'
     canvasW: 900,
     canvasH: 700,
-    snapGrid: 0,              // 0 = off; positive integer = snap size in px (freeform only)
-    classSetId:     null      // class set selected for this room
+    snapGrid: 0,                // 0 = off; positive integer = snap size in px (freeform only)
+    classSetId:     null        // class set selected for this room
   };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       room.seats.push(makeSeat(id, r, c));
     }
   }
-  // All rooms are freeform — convert immediately
+  // Place seats at grid positions in freeform canvas
   roomSwitchToFreeform(room);
   state.rooms.push(room);
   return room;
@@ -1947,14 +1947,10 @@ function renderGrid() {
   updateFrontLabel(room);
   updateCapacityBadge(room);
 
-  if (room.layoutMode === 'freeform') {
-    renderFreeformGrid(room, grid);
-    if (state.mode === 'layout') {
-      showInfoBar('Click canvas to add desk  ·  Drag to move  ·  Right-click to delete');
-    }
-  } else {
-    // Legacy fallback: should not normally occur since normaliseRoom converts all grid rooms
-    renderRegularGrid(room, grid);
+  // All rooms are freeform after normaliseRoom migration
+  renderFreeformGrid(room, grid);
+  if (state.mode === 'layout') {
+    showInfoBar('Click canvas to add desk  ·  Drag to move  ·  Right-click to delete');
   }
 }
 
@@ -3019,8 +3015,7 @@ function initEvents() {
     });
   });
 
-  // ── Layout mode toggle (grid ↔ freeform) — retained for backwards compatibility
-  // Layout toggle button is hidden; all rooms are now freeform.
+  // ── Layout mode toggle: hidden (grid mode removed, all rooms are freeform)
   const layoutToggleBtn = document.getElementById('layout-toggle-btn');
   if (layoutToggleBtn) layoutToggleBtn.style.display = 'none';
 
