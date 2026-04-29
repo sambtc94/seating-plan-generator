@@ -114,6 +114,10 @@
           <label>W:<input type="number" id="canvas-w-input" value="900" min="300" max="3000" step="50" /></label>
           <label>H:<input type="number" id="canvas-h-input" value="700" min="200" max="2000" step="50" /></label>
           <button class="btn btn-secondary btn-sm" id="resize-canvas-btn">↔ Resize Canvas</button>
+          <label style="margin-left:6px">Snap:
+            <input type="number" id="snap-grid-input" value="0" min="0" max="200" step="1" style="width:52px" title="Snap grid size in pixels (0 = off)" />px
+          </label>
+          <button class="btn btn-secondary btn-sm" id="snap-grid-btn" title="Apply snap grid size">Apply</button>
         </div>
         <span class="toolbar-label room-config-sep">Front:</span>
         <button class="btn btn-sm dir-btn active" data-dir="top"    title="Front of class at top"   >↑</button>
@@ -157,6 +161,7 @@
   <button class="seat-ctx-item" data-label="whiteboard">📋 Whiteboard</button>
   <button class="seat-ctx-item" data-label="bookshelf">📚 Bookshelf</button>
   <button class="seat-ctx-item" data-label="projector">📽 Projector</button>
+  <button class="seat-ctx-item" data-label="computer">💻 Computer Desk</button>
 </div>
 
 <!-- ── SEAT TOOLTIP ──────────────────────────────────── -->

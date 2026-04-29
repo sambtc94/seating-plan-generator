@@ -20,7 +20,8 @@ const SEAT_LABELS = {
   teacher:    { icon: '👨‍🏫', name: "Teacher's Desk" },
   whiteboard: { icon: '📋',  name: 'Whiteboard'      },
   bookshelf:  { icon: '📚',  name: 'Bookshelf'       },
-  projector:  { icon: '📽',  name: 'Projector'       }
+  projector:  { icon: '📽',  name: 'Projector'       },
+  computer:   { icon: '💻',  name: 'Computer Desk'   }
 };
 
 const CELL_SIZE              = 84;  // 78px seat + 6px gap — used for grid↔freeform conversion
@@ -143,6 +144,15 @@ function currentRoom() {
   return state.rooms.find(r => r.id === state.currentRoomId) ?? null;
 }
 
+/**
+ * Snap a pixel coordinate to the nearest multiple of `gridSize`.
+ * If `gridSize` is 0 or falsy, returns the value unchanged.
+ */
+function snapCoord(value, gridSize) {
+  if (!gridSize) return value;
+  return Math.round(value / gridSize) * gridSize;
+}
+
 function studentById(id) {
   return state.students.find(s => s.id === id) ?? null;
 }
@@ -182,7 +192,8 @@ function roomCreate(name = 'New Room', rows = 5, cols = 6) {
     layoutMode:     'grid',   // 'grid' | 'freeform'
     frontDirection: 'top',    // 'top' | 'right' | 'bottom' | 'left'
     canvasW: 900,
-    canvasH: 700
+    canvasH: 700,
+    snapGrid: 0               // 0 = off; positive integer = snap size in px (freeform only)
   };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -609,10 +620,12 @@ function assignStudents(method) {
             let score = Math.random() * 0.02;
             (student.sitNear || []).forEach(nearId => {
               const ns = seats.find(s => s.studentId === nearId);
+              // High weight (500) ensures keep-together takes priority over ability grouping
               if (ns) score += 500 / (1 + seatDist(seat, ns));
             });
             (student.doNotSitNear || []).forEach(awayId => {
               const ns = seats.find(s => s.studentId === awayId);
+              // High weight (1000) ensures keep-apart takes priority over all other factors
               if (ns) score -= 1000 / (1 + seatDist(seat, ns));
             });
             if (score > bestScore) { bestScore = score; best = seat; }
@@ -666,11 +679,13 @@ function assignStudents(method) {
 
       (student.sitNear || []).forEach(nearId => {
         const ns = pool.find(s => s.studentId === nearId);
+        // High weight (500) ensures keep-together constraints take priority over other factors
         if (ns) score += 500 / (1 + seatDist(seat, ns));
       });
 
       (student.doNotSitNear || []).forEach(awayId => {
         const ns = pool.find(s => s.studentId === awayId);
+        // High weight (1000) ensures keep-apart constraints take priority over all other factors
         if (ns) score -= 1000 / (1 + seatDist(seat, ns));
       });
 
@@ -805,7 +820,8 @@ function normaliseRoom(room) {
     frontDirection:    'top',
     canvasW:           900,
     canvasH:           700,
-    assignmentHistory: []
+    assignmentHistory: [],
+    snapGrid:          0    // 0 = off; positive integer = snap size in px
   }, room);
 }
 
@@ -1628,6 +1644,7 @@ function updateRoomControls(room) {
   if (room && isFreeform) {
     document.getElementById('canvas-w-input').value = room.canvasW ?? 900;
     document.getElementById('canvas-h-input').value = room.canvasH ?? 700;
+    document.getElementById('snap-grid-input').value = room.snapGrid ?? 0;
   }
 
   // Layout toggle button
@@ -1840,8 +1857,10 @@ function renderFreeformGrid(room, grid) {
         return;
       }
       const rect = grid.getBoundingClientRect();
-      const x = Math.round(Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF)));
-      const y = Math.round(Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, e.clientY - rect.top  - SEAT_HALF)));
+      const rawX = Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF));
+      const rawY = Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, e.clientY - rect.top  - SEAT_HALF));
+      const x = snapCoord(Math.round(rawX), room.snapGrid || 0);
+      const y = snapCoord(Math.round(rawY), room.snapGrid || 0);
       // Prevent stacking: if a seat already occupies the same area, ignore this event.
       // (DOM replacement via cloneNode can cause browsers to re-fire pointerdown on the
       // new element while the pointer is still physically held down, producing duplicates.)
@@ -1874,8 +1893,10 @@ function attachFreeformDrag(cell, seat, room) {
       const dy = ev.clientY - startClientY;
       if (!moved && Math.hypot(dx, dy) < 4) return;
       moved = true;
-      seat.x = Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, origX + dx));
-      seat.y = Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, origY + dy));
+      const rawX = Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, origX + dx));
+      const rawY = Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, origY + dy));
+      seat.x = snapCoord(rawX, room.snapGrid || 0);
+      seat.y = snapCoord(rawY, room.snapGrid || 0);
       cell.style.left = seat.x + 'px';
       cell.style.top  = seat.y + 'px';
     };
@@ -1886,6 +1907,7 @@ function attachFreeformDrag(cell, seat, room) {
       cell.classList.remove('dragging');
       if (moved) {
         pushHistory();
+        // seat.x/y are already snapped (applied in onMove); just round to whole pixels
         seat.x = Math.round(seat.x);
         seat.y = Math.round(seat.y);
         scheduleAutosave();
@@ -2604,6 +2626,19 @@ function initEvents() {
     room.canvasH = h;
     renderGrid();
     scheduleAutosave();
+  });
+
+  // ── Snap-grid (freeform mode) ─────────────────────────────
+  document.getElementById('snap-grid-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    const snap = parseInt(document.getElementById('snap-grid-input').value, 10);
+    if (isNaN(snap) || snap < 0 || snap > 200) {
+      alert('Snap size must be 0 (off) to 200 pixels.'); return;
+    }
+    room.snapGrid = snap;
+    scheduleAutosave();
+    showInfoBar(snap ? `Snap to ${snap}px grid enabled` : 'Snap to grid disabled');
   });
 
   // ── Mode buttons ─────────────────────────────────────────
