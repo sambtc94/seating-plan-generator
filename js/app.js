@@ -402,11 +402,12 @@ function studentDelete(id) {
    CLUSTER MANAGEMENT
 ============================================================ */
 
-function clusterCreate(room, name = 'Cluster', colour = null) {
+function clusterCreate(room, name = 'Cluster', colour = null, abilityLevel = null) {
   const cl = {
     id:    uid(),
     name,
-    colour: colour || CLUSTER_COLOURS[room.clusters.length % CLUSTER_COLOURS.length]
+    colour:       colour || CLUSTER_COLOURS[room.clusters.length % CLUSTER_COLOURS.length],
+    abilityLevel: abilityLevel != null ? Number(abilityLevel) : null
   };
   room.clusters.push(cl);
   return cl;
@@ -528,6 +529,76 @@ function assignStudents(method) {
       const am = a.marks ?? -Infinity;
       return bm - am; // highest marks first
     });
+
+    // If any clusters have ability levels set, distribute students into those
+    // clusters in order (level 1 = highest ability, level 2 = next, …).
+    const levelledClusters = room.clusters.filter(c => c.abilityLevel != null);
+    if (levelledClusters.length) {
+      // Unique levels in ascending order (1 first → highest ability)
+      const levels = [...new Set(levelledClusters.map(c => c.abilityLevel))].sort((a, b) => a - b);
+
+      // Seats partitioned by ability level (single pass)
+      const seatsByLevel = {};
+      levels.forEach(lvl => { seatsByLevel[lvl] = []; });
+      const levelClusterToLevel = {};
+      levelledClusters.forEach(c => { levelClusterToLevel[c.id] = c.abilityLevel; });
+      seats.forEach(s => {
+        if (s.clusterId && levelClusterToLevel[s.clusterId] != null) {
+          seatsByLevel[levelClusterToLevel[s.clusterId]].push(s);
+        }
+      });
+
+      // Seats not covered by any levelled cluster
+      const levelledIds = new Set(levelledClusters.map(c => c.id));
+      const unlevelledSeats = seats.filter(s => !s.clusterId || !levelledIds.has(s.clusterId));
+
+      // Partition students: each levelled pool gets as many students as it has seats
+      const studentsByLevel = {};
+      let idx = 0;
+      levels.forEach(lvl => {
+        const count = seatsByLevel[lvl].length;
+        studentsByLevel[lvl] = students.slice(idx, idx + count);
+        idx += count;
+      });
+      const remainingStudents = students.slice(idx);
+
+      // Helper: greedy placement of a student list into a seat pool
+      const greedyPlace = (studentList, seatPool) => {
+        for (const student of studentList) {
+          const available = seatPool.filter(s => !s.studentId);
+          if (!available.length) break;
+          let best = available[0], bestScore = -Infinity;
+          for (const seat of available) {
+            let score = Math.random() * 0.02;
+            (student.sitNear || []).forEach(nearId => {
+              const ns = seats.find(s => s.studentId === nearId);
+              if (ns) score += 10 / (1 + seatDist(seat, ns));
+            });
+            (student.doNotSitNear || []).forEach(awayId => {
+              const ns = seats.find(s => s.studentId === awayId);
+              if (ns) score -= 15 / (1 + seatDist(seat, ns));
+            });
+            if (score > bestScore) { bestScore = score; best = seat; }
+          }
+          best.studentId = student.id;
+        }
+      };
+
+      // Place each ability group into its designated seats
+      levels.forEach(lvl => greedyPlace(studentsByLevel[lvl], seatsByLevel[lvl]));
+      greedyPlace(remainingStudents, unlevelledSeats);
+
+      // Skip the default greedy loop below
+      room.assignmentHistory = room.assignmentHistory || [];
+      room.assignmentHistory.unshift({
+        id:    uid(),
+        ts:    Date.now(),
+        method,
+        seats: room.seats.map(s => ({ id: s.id, studentId: s.studentId }))
+      });
+      if (room.assignmentHistory.length > 10) room.assignmentHistory.pop();
+      return;
+    }
 
   } else if (method === 'gender') {
     // Interleave male / female, append other/unspecified
@@ -1949,6 +2020,21 @@ function renderClusterPanel() {
     cnt.className = 'cluster-count';
     cnt.textContent = `${seatCount} seat${seatCount !== 1 ? 's' : ''}`;
 
+    if (cl.abilityLevel != null) {
+      const badge = document.createElement('span');
+      badge.className = 'cluster-ability-badge';
+      badge.title = 'Ability level (1 = highest)';
+      badge.textContent = `L${cl.abilityLevel}`;
+      item.appendChild(dot);
+      item.appendChild(name);
+      item.appendChild(cnt);
+      item.appendChild(badge);
+    } else {
+      item.appendChild(dot);
+      item.appendChild(name);
+      item.appendChild(cnt);
+    }
+
     const acts = document.createElement('div');
     acts.className = 'cluster-actions';
 
@@ -1973,9 +2059,6 @@ function renderClusterPanel() {
     acts.appendChild(eBtn);
     acts.appendChild(dBtn);
 
-    item.appendChild(dot);
-    item.appendChild(name);
-    item.appendChild(cnt);
     item.appendChild(acts);
     list.appendChild(item);
 
@@ -2081,6 +2164,7 @@ function openModal(type, id = null) {
     document.getElementById('cluster-name-input').value  = cl?.name  ?? '';
     document.getElementById('cluster-colour-input').value =
       cl?.colour ?? CLUSTER_COLOURS[room.clusters.length % CLUSTER_COLOURS.length];
+    document.getElementById('cluster-ability-input').value = cl?.abilityLevel ?? '';
     showModalEl('cluster-modal');
   }
 }
@@ -2206,12 +2290,17 @@ function saveClusterModal() {
   const name  = document.getElementById('cluster-name-input').value.trim();
   if (!name) { alert('Please enter a cluster name.'); return; }
   const colour = document.getElementById('cluster-colour-input').value;
+  const abilityRaw = document.getElementById('cluster-ability-input').value;
+  const abilityLevel = abilityRaw !== '' ? parseInt(abilityRaw, 10) : null;
+  if (abilityLevel !== null && (isNaN(abilityLevel) || abilityLevel < 1)) {
+    alert('Ability level must be a whole number of 1 or greater.'); return;
+  }
 
   if (editCtx.id) {
     const cl = room.clusters.find(c => c.id === editCtx.id);
-    if (cl) { cl.name = name; cl.colour = colour; }
+    if (cl) { cl.name = name; cl.colour = colour; cl.abilityLevel = abilityLevel; }
   } else {
-    const cl = clusterCreate(room, name, colour);
+    const cl = clusterCreate(room, name, colour, abilityLevel);
     state.activeClusterId = cl.id;
     // Switch to cluster mode to make it easy to assign seats
     setMode('cluster');

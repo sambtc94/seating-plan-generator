@@ -381,6 +381,11 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 .cluster-name  { font-size: 13px; font-weight: 500; flex: 1; min-width: 0; }
 .cluster-count { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .cluster-actions{ display: flex; gap: 2px; }
+.cluster-ability-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 5px;
+  border-radius: 4px; background: var(--primary); color: #fff;
+  white-space: nowrap; flex-shrink: 0;
+}
 
 .cluster-legend {
   padding: 6px 10px; border-top: 1px solid var(--border);
