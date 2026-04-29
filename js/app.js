@@ -25,7 +25,7 @@ const SEAT_LABELS = {
 };
 
 const CELL_SIZE              = 84;  // 78px seat + 6px gap — used for grid↔freeform conversion
-const FREEFORM_PAD           = 40;  // padding inside the freeform canvas
+const FREEFORM_PAD           = 42;  // padding inside the freeform canvas (= CELL_SIZE/2, aligns with the 42px background grid)
 const SEAT_WIDTH             = 78;  // seat cell width/height in px
 const SEAT_HALF              = 39;  // half of SEAT_WIDTH (for centring click position)
 const FREEFORM_ADJACENCY_PX  = 170; // pixel proximity for cluster auto-detect in freeform mode
@@ -287,6 +287,8 @@ function roomSwitchToFreeform(room) {
   room.canvasW = FREEFORM_PAD + room.cols * CELL_SIZE + FREEFORM_PAD;
   room.canvasH = FREEFORM_PAD + room.rows * CELL_SIZE + FREEFORM_PAD;
   room.layoutMode = 'freeform';
+  // Enable snap-to-grid by default so seats align with the background dot grid
+  room.snapGrid = FREEFORM_PAD;
 }
 
 /** Snap all freeform seats to the nearest grid position and rebuild as a grid room. */
