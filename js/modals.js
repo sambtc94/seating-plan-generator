@@ -262,7 +262,7 @@ function openHelpModal() {
     <li><strong>⧉ Duplicate</strong> — copies the current class layout (without student assignments).</li>
     <li><strong>📦 Archive</strong> — hides the class from the tab bar. Click <em>📦 Archived</em> to toggle visibility of archived classes.</li>
     <li><strong>🗑 Delete Class</strong> — permanently deletes the class and its layout.</li>
-    <li><strong>💾 Template / 📐 Apply</strong> — save the current layout as a reusable template, then apply it to another class.</li>
+    <li><strong>📐 Templates</strong> — opens the Templates manager where you can save the current room layout as a reusable template, apply saved templates to any class, rename templates, and delete them.</li>
   </ul>
   <p>Each class remembers which <em>Class Set</em> was last active, so switching tabs restores your student filter automatically.</p>
 </section>
@@ -767,4 +767,158 @@ function newClassSetFromModal() {
     sl.appendChild(label);
   });
   renderClassSetModalList();
+}
+
+/* ============================================================
+   TEMPLATES MODAL
+============================================================ */
+function openTemplatesModal() {
+  renderTemplatesList();
+  showModalEl('templates-modal');
+}
+
+function renderTemplatesList() {
+  const listEl   = document.getElementById('templates-list');
+  const applyBtn = document.getElementById('tmpl-apply-btn');
+  listEl.innerHTML = '';
+
+  if (!state.roomTemplates.length) {
+    listEl.innerHTML = '<div class="empty-msg">No templates saved yet.<br>Select a room and click "💾 Save Current Room as Template".</div>';
+    applyBtn.disabled = true;
+    return;
+  }
+
+  let selectedTmplId = null;
+
+  state.roomTemplates.forEach(tmpl => {
+    const item = document.createElement('div');
+    item.className = 'template-item';
+    item.dataset.tmplId = tmpl.id;
+
+    const icon = document.createElement('span');
+    icon.className = 'template-icon';
+    icon.textContent = '📐';
+
+    const info = document.createElement('div');
+    info.className = 'template-info';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'template-name';
+    nameEl.textContent = tmpl.name;
+
+    const meta = document.createElement('span');
+    meta.className = 'template-meta';
+    const seatCount = (tmpl.seats || []).filter(s => s.enabled !== false).length;
+    meta.textContent = `${seatCount} desk${seatCount !== 1 ? 's' : ''}`;
+    if ((tmpl.clusters || []).length) meta.textContent += ` · ${tmpl.clusters.length} cluster${tmpl.clusters.length !== 1 ? 's' : ''}`;
+
+    info.appendChild(nameEl);
+    info.appendChild(meta);
+
+    const acts = document.createElement('div');
+    acts.className = 'template-actions';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'btn-icon';
+    renameBtn.textContent = '✏️';
+    renameBtn.title = 'Rename template';
+    renameBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const newName = window.prompt('Rename template:', tmpl.name);
+      if (!newName || !newName.trim()) return;
+      tmpl.name = newName.trim();
+      scheduleAutosave();
+      renderTemplatesList();
+    });
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-icon';
+    delBtn.textContent = '🗑';
+    delBtn.title = 'Delete template';
+    delBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (confirm(`Delete template "${tmpl.name}"?`)) {
+        state.roomTemplates = state.roomTemplates.filter(t => t.id !== tmpl.id);
+        scheduleAutosave();
+        renderTemplatesList();
+      }
+    });
+
+    acts.appendChild(renameBtn);
+    acts.appendChild(delBtn);
+
+    item.appendChild(icon);
+    item.appendChild(info);
+    item.appendChild(acts);
+
+    // Selecting a template enables the Apply button
+    item.addEventListener('click', () => {
+      listEl.querySelectorAll('.template-item').forEach(el => el.classList.remove('template-selected'));
+      item.classList.add('template-selected');
+      selectedTmplId = tmpl.id;
+      document.getElementById('tmpl-apply-btn').disabled = false;
+    });
+
+    listEl.appendChild(item);
+  });
+
+  applyBtn.disabled = true;
+  selectedTmplId = null;
+
+  // Wire up Apply button inside this render (replace previous listener)
+  const newApplyBtn = applyBtn.cloneNode(true);
+  applyBtn.parentNode.replaceChild(newApplyBtn, applyBtn);
+  newApplyBtn.addEventListener('click', () => {
+    if (!selectedTmplId) return;
+    const room = currentRoom();
+    if (!room) { alert('Please select a room first.'); return; }
+    const tmpl = state.roomTemplates.find(t => t.id === selectedTmplId);
+    if (!tmpl) return;
+    if (!confirm('Apply template? The current room layout will be replaced (student assignments will be cleared).')) return;
+    pushHistory();
+    const clusterIdMap = {};
+    room.clusters = (tmpl.clusters || []).map(cl => {
+      const newId = uid();
+      clusterIdMap[cl.id] = newId;
+      return Object.assign({}, cl, { id: newId });
+    });
+    room.rows = tmpl.rows; room.cols = tmpl.cols;
+    room.layoutMode = tmpl.layoutMode;
+    room.canvasW = tmpl.canvasW; room.canvasH = tmpl.canvasH;
+    room.seats = (tmpl.seats || []).map(s => Object.assign({}, s, {
+      id: uid(),
+      studentId: null,
+      clusterId: s.clusterId ? (clusterIdMap[s.clusterId] || null) : null
+    }));
+    scheduleAutosave();
+    closeModal();
+    renderAll();
+  });
+
+  // Wire up Save Current Room button
+  const saveBtn = document.getElementById('tmpl-save-current-btn');
+  const newSaveBtn = saveBtn.cloneNode(true);
+  saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+  newSaveBtn.addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) { alert('Please select a room first.'); return; }
+    const name = window.prompt('Template name:', room.name + ' layout');
+    if (!name || !name.trim()) return;
+    const tmpl = {
+      id: uid(),
+      name: name.trim(),
+      rows: room.rows, cols: room.cols,
+      layoutMode: room.layoutMode,
+      canvasW: room.canvasW, canvasH: room.canvasH,
+      clusters: JSON.parse(JSON.stringify(room.clusters)),
+      seats: room.seats.map(s => ({
+        id: s.id, row: s.row, col: s.col, x: s.x, y: s.y,
+        enabled: s.enabled, clusterId: s.clusterId, label: s.label,
+        pinned: false
+      }))
+    };
+    state.roomTemplates.push(tmpl);
+    scheduleAutosave();
+    renderTemplatesList();
+  });
 }

@@ -370,17 +370,8 @@ function initEvents() {
     renderGrid();
   });
 
-  // ── Room template buttons (Feature 10) ───────────────────
-  document.getElementById('save-template-btn').addEventListener('click', () => {
-    const room = currentRoom();
-    if (!room) { alert('Please select a room first.'); return; }
-    saveRoomAsTemplate(room);
-  });
-  document.getElementById('apply-template-btn').addEventListener('click', () => {
-    const room = currentRoom();
-    if (!room) { alert('Please select a room first.'); return; }
-    applyTemplateToRoom(room);
-  });
+  // ── Room template tab (Templates modal) ──────────────────
+  document.getElementById('templates-tab-btn').addEventListener('click', openTemplatesModal);
 
   // Hide seat context menu on any outside click
   document.addEventListener('click', e => {

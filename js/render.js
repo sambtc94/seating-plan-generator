@@ -35,6 +35,7 @@ function handleDrop(targetSeatId) {
   resetDrag();
   renderGrid();
   renderStudentList(); // update "seated" indicators
+  scheduleAutosave();
 }
 
 function resetDrag() {
@@ -937,12 +938,51 @@ function renderClusterPanel() {
     return;
   }
 
-  room.clusters.forEach(cl => {
+  let dragSrcIndex = null;
+
+  room.clusters.forEach((cl, idx) => {
     const seatCount = room.seats.filter(s => s.clusterId === cl.id).length;
 
     // List item
     const item = document.createElement('div');
     item.className = 'cluster-item';
+    item.draggable = true;
+    item.dataset.clusterIdx = idx;
+
+    // ── Drag-to-reorder handles ──────────────────────────────
+    item.addEventListener('dragstart', e => {
+      dragSrcIndex = idx;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', idx);
+      item.classList.add('cluster-dragging');
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('cluster-dragging');
+      list.querySelectorAll('.cluster-item').forEach(el => el.classList.remove('cluster-drag-over'));
+    });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      list.querySelectorAll('.cluster-item').forEach(el => el.classList.remove('cluster-drag-over'));
+      item.classList.add('cluster-drag-over');
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('cluster-drag-over'));
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      item.classList.remove('cluster-drag-over');
+      if (dragSrcIndex === null || dragSrcIndex === idx) return;
+      const moved = room.clusters.splice(dragSrcIndex, 1)[0];
+      room.clusters.splice(idx, 0, moved);
+      dragSrcIndex = null;
+      scheduleAutosave();
+      renderClusterPanel();
+    });
+
+    const handle = document.createElement('span');
+    handle.className = 'cluster-drag-handle';
+    handle.textContent = '⠿';
+    handle.title = 'Drag to reorder';
+    handle.setAttribute('aria-label', 'Drag to reorder cluster');
 
     const dot = document.createElement('div');
     dot.className = 'cluster-dot';
@@ -956,19 +996,17 @@ function renderClusterPanel() {
     cnt.className = 'cluster-count';
     cnt.textContent = `${seatCount} seat${seatCount !== 1 ? 's' : ''}`;
 
+    item.appendChild(handle);
+    item.appendChild(dot);
+    item.appendChild(name);
+    item.appendChild(cnt);
+
     if (cl.abilityLevel != null) {
       const badge = document.createElement('span');
       badge.className = 'cluster-ability-badge';
       badge.title = 'Ability level (1 = highest)';
       badge.textContent = `L${cl.abilityLevel}`;
-      item.appendChild(dot);
-      item.appendChild(name);
-      item.appendChild(cnt);
       item.appendChild(badge);
-    } else {
-      item.appendChild(dot);
-      item.appendChild(name);
-      item.appendChild(cnt);
     }
 
     const acts = document.createElement('div');
