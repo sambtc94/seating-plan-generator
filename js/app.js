@@ -1710,6 +1710,13 @@ function renderFreeformGrid(room, grid) {
       const rect = grid.getBoundingClientRect();
       const x = Math.round(Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF)));
       const y = Math.round(Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, e.clientY - rect.top  - SEAT_HALF)));
+      // Prevent stacking: if a seat already occupies the same area, ignore this event.
+      // (DOM replacement via cloneNode can cause browsers to re-fire pointerdown on the
+      // new element while the pointer is still physically held down, producing duplicates.)
+      const tooClose = room.seats.some(s =>
+        Math.abs((s.x ?? 0) - x) < SEAT_HALF && Math.abs((s.y ?? 0) - y) < SEAT_HALF
+      );
+      if (tooClose) return;
       room.seats.push(makeFreeformSeat(room.id, x, y));
       scheduleAutosave();
       renderGrid();
