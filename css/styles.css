@@ -1033,11 +1033,12 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
 }
 
 @media print {
-  /* Hide all UI chrome when printing the register */
-  body > *:not(#modal-overlay) { display: none !important; }
-  #modal-overlay                { position: static !important; background: transparent !important; }
-  .modal-overlay                { position: static !important; }
-  #register-modal               { display: block !important; position: static !important; box-shadow: none !important; }
-  .modal-footer                 { display: none !important; }
-  .modal-header button          { display: none !important; }
+  /* Hide all UI chrome when printing the register.
+     Scoped to body.printing-register so normal seating-plan prints are unaffected. */
+  body.printing-register > *:not(#modal-overlay) { display: none !important; }
+  body.printing-register #modal-overlay           { position: static !important; background: transparent !important; }
+  body.printing-register .modal-overlay           { position: static !important; }
+  body.printing-register #register-modal          { display: block !important; position: static !important; box-shadow: none !important; }
+  body.printing-register .modal-footer            { display: none !important; }
+  body.printing-register .modal-header button     { display: none !important; }
 }

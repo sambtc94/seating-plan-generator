@@ -676,7 +676,9 @@ function assignStudents(method) {
 
       // Place each ability group into its designated seats
       levels.forEach(lvl => greedyPlace(studentsByLevel[lvl], seatsByLevel[lvl]));
-      greedyPlace(remainingStudents, unlevelledSeats);
+      // Remaining students (overflow from sitNear adjustments, or extras beyond
+      // levelled-cluster capacity) go into any still-empty available seat.
+      greedyPlace(remainingStudents, availableSeats);
 
       // Skip the default greedy loop below
       room.assignmentHistory = room.assignmentHistory || [];
@@ -3190,7 +3192,9 @@ function initEvents() {
   document.getElementById('export-csv-btn').addEventListener('click', exportCSV);
 
   // ── Seat context menu ────────────────────────────────────
-  document.querySelectorAll('.seat-ctx-item').forEach(btn => {
+  // Only attach the label-change handler to items that carry a data-label attribute;
+  // the clear and pin buttons have their own dedicated handlers below.
+  document.querySelectorAll('.seat-ctx-item[data-label]').forEach(btn => {
     btn.addEventListener('click', () => {
       const room = state.rooms.find(r => r.id === ctxMenuRoomId);
       const seat = room?.seats.find(s => s.id === ctxMenuSeatId);
@@ -3236,7 +3240,11 @@ function initEvents() {
 
   // ── Register button (Feature 18) ─────────────────────────
   document.getElementById('register-btn').addEventListener('click', showRegisterModal);
-  document.getElementById('register-print-btn').addEventListener('click', () => window.print());
+  document.getElementById('register-print-btn').addEventListener('click', () => {
+    document.body.classList.add('printing-register');
+    window.print();
+    document.body.classList.remove('printing-register');
+  });
 
   // ── Audit mode button (Feature 20) ───────────────────────
   document.getElementById('audit-btn').addEventListener('click', () => {
