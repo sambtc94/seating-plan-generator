@@ -507,7 +507,7 @@ function buildConstraintLists(excludeId, sitNear, doNotSitNear) {
   const nsnEl = document.getElementById('no-sit-near-list');
   snEl.innerHTML = nsnEl.innerHTML = '';
 
-  const others = state.students.filter(s => s.id !== excludeId);
+  const others = visibleStudents().filter(s => s.id !== excludeId);
   if (!others.length) {
     snEl.innerHTML = nsnEl.innerHTML =
       '<div class="empty-msg">No other students yet.</div>';
@@ -565,9 +565,10 @@ function saveStudentModal() {
     alert('Marks must be a number between 0 and 100.'); return;
   }
 
-  const sitNear = [...document.querySelectorAll('#sit-near-list input[name="sit-near"]:checked')]
+  // Checked constraint IDs come only from the visible (filtered) list.
+  const checkedSitNear = [...document.querySelectorAll('#sit-near-list input[name="sit-near"]:checked')]
     .map(cb => cb.value);
-  const doNotSitNear = [...document.querySelectorAll('#no-sit-near-list input[name="no-sit-near"]:checked')]
+  const checkedDoNot = [...document.querySelectorAll('#no-sit-near-list input[name="no-sit-near"]:checked')]
     .map(cb => cb.value);
 
   const flags = [...document.querySelectorAll('#flag-checkboxes input[name="student-flag"]:checked')]
@@ -577,6 +578,22 @@ function saveStudentModal() {
   const position = document.getElementById('s-position').value;
 
   const persist = (photo) => {
+    // IDs of students currently shown in the constraint lists (filtered by class set).
+    const visibleOtherIds = new Set(visibleStudents().filter(s => s.id !== editCtx.id).map(s => s.id));
+
+    // Preserve existing constraints for students not visible in the lists,
+    // then apply the checkbox selections for visible students.
+    const existingSitNear = editCtx.id ? (studentById(editCtx.id)?.sitNear      ?? []) : [];
+    const existingDoNot   = editCtx.id ? (studentById(editCtx.id)?.doNotSitNear ?? []) : [];
+    const sitNear = [
+      ...existingSitNear.filter(id => !visibleOtherIds.has(id)),
+      ...checkedSitNear
+    ];
+    const doNotSitNear = [
+      ...existingDoNot.filter(id => !visibleOtherIds.has(id)),
+      ...checkedDoNot
+    ];
+
     const existingAbsent = editCtx.id ? (studentById(editCtx.id)?.absent ?? false) : false;
     const data = {
       name,
@@ -592,6 +609,21 @@ function saveStudentModal() {
     };
     if (editCtx.id) {
       studentUpdate(editCtx.id, data);
+      // Bidirectional sync: mirror this student's constraints onto each visible peer.
+      visibleOtherIds.forEach(otherId => {
+        const other = studentById(otherId);
+        if (!other) return;
+        if (checkedSitNear.includes(otherId)) {
+          if (!other.sitNear.includes(editCtx.id)) other.sitNear.push(editCtx.id);
+        } else {
+          other.sitNear = other.sitNear.filter(x => x !== editCtx.id);
+        }
+        if (checkedDoNot.includes(otherId)) {
+          if (!other.doNotSitNear.includes(editCtx.id)) other.doNotSitNear.push(editCtx.id);
+        } else {
+          other.doNotSitNear = other.doNotSitNear.filter(x => x !== editCtx.id);
+        }
+      });
     } else {
       studentCreate(data);
     }
