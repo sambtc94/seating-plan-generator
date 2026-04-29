@@ -16,6 +16,11 @@ const STUDENT_FLAGS = [
   { key: 'Behaviour', label: 'Behaviour', colour: '#e67e22' }
 ];
 
+/** Returns built-in + custom flag definitions. */
+function allFlags() {
+  return [...STUDENT_FLAGS, ...(state.customFlags || [])];
+}
+
 const SEAT_LABELS = {
   teacher:    { icon: '👨‍🏫', name: "Teacher's Desk" },
   whiteboard: { icon: '📋',  name: 'Whiteboard'      },
@@ -38,6 +43,8 @@ const state = {
   rooms:         [],   // Room[]
   students:      [],   // Student[]
   classSets:     [],   // ClassSet[]
+  customFlags:   [],   // { key, label, colour }[]  — teacher-defined extra flags
+  roomTemplates: [],   // RoomTemplate[]
   currentRoomId: null, // string | null
 
   // UI-only (not persisted)
@@ -45,6 +52,7 @@ const state = {
   activeClusterId:   null,     // string | null
   activeClassSetId:  null,     // string | null — filter for student panel
   showArchived:      false,    // show archived room tabs
+  auditMode:         false,    // highlight constraint violations
   drag: { studentId: null, fromSeatId: null }
 };
 
@@ -211,13 +219,14 @@ function makeSeat(roomId, r, c) {
     enabled: true,
     clusterId: null,
     studentId: null,
-    label: null
+    label: null,
+    pinned: false
   };
 }
 
 /** Create a seat at arbitrary pixel coordinates (freeform mode). */
 function makeFreeformSeat(roomId, x, y) {
-  return { id: uid(), row: -1, col: -1, x, y, enabled: true, clusterId: null, studentId: null, label: null };
+  return { id: uid(), row: -1, col: -1, x, y, enabled: true, clusterId: null, studentId: null, label: null, pinned: false };
 }
 
 function roomDelete(id) {
@@ -377,7 +386,9 @@ function studentCreate(data = {}) {
     notes:         data.notes  || '',
     flags:         Array.isArray(data.flags) ? [...data.flags] : [],
     sitNear:       Array.isArray(data.sitNear)      ? [...data.sitNear]      : [],
-    doNotSitNear:  Array.isArray(data.doNotSitNear) ? [...data.doNotSitNear] : []
+    doNotSitNear:  Array.isArray(data.doNotSitNear) ? [...data.doNotSitNear] : [],
+    absent:        data.absent   || false,
+    position:      data.position || ''   // '' | 'front' | 'back' | 'left' | 'right'
   };
   state.students.push(s);
   return s;
@@ -389,7 +400,9 @@ function normaliseStudent(s) {
     notes:        '',
     flags:        [],
     sitNear:      [],
-    doNotSitNear: []
+    doNotSitNear: [],
+    absent:       false,
+    position:     ''
   }, s);
 }
 
@@ -514,7 +527,7 @@ function visibleStudents() {
 
 /**
  * Assign all students to seats in the current room using the chosen method.
- * Respects sitNear / doNotSitNear constraints via greedy scoring.
+ * Respects sitNear / doNotSitNear / position / pinned / absent constraints.
  *
  * @param {'random'|'ability'|'gender'} method
  */
@@ -522,15 +535,35 @@ function assignStudents(method) {
   const room = currentRoom();
   if (!room) return;
 
-  // Clear existing
+  // ── Capture previous neighbour pairs before clearing (Feature 8) ──
+  const prevPairs = computeNeighbourPairs(room);
+  room.prevNeighbourPairs = [...prevPairs];
+  const prevSet = new Set(prevPairs);
+  const varyNeighbours = document.getElementById('vary-neighbours-cb')?.checked ?? true;
+
+  // ── Preserve pinned assignments (Feature 9) ──
+  const pinnedMap = {};
+  room.seats.filter(s => s.pinned && s.studentId).forEach(s => { pinnedMap[s.id] = s.studentId; });
+
+  // Clear existing (non-pinned restored below)
   room.seats.forEach(s => { s.studentId = null; });
+
+  // Restore pinned
+  Object.entries(pinnedMap).forEach(([seatId, stuId]) => {
+    const s = seatById(room, seatId);
+    if (s) s.studentId = stuId;
+  });
 
   // Only assignable seats (enabled and not labelled as a room object)
   const seats = room.seats.filter(s => isSeatAssignable(s));
   if (!seats.length) { alert('No seats available in this room.'); return; }
 
-  let students = [...visibleStudents()];
-  if (!students.length) { alert('No students to assign.'); return; }
+  const pinnedStudentIds = new Set(Object.values(pinnedMap));
+  const availableSeats   = seats.filter(s => !s.pinned);
+
+  // Exclude absent and already-pinned students
+  let students = visibleStudents().filter(s => !s.absent && !pinnedStudentIds.has(s.id));
+  if (!students.length && !Object.keys(pinnedMap).length) { alert('No students to assign.'); return; }
 
   // ── Sort students ──────────────────────────────────────────
   if (method === 'random') {
@@ -555,7 +588,7 @@ function assignStudents(method) {
       levels.forEach(lvl => { seatsByLevel[lvl] = []; });
       const levelClusterToLevel = {};
       levelledClusters.forEach(c => { levelClusterToLevel[c.id] = c.abilityLevel; });
-      seats.forEach(s => {
+      availableSeats.forEach(s => {
         if (s.clusterId && levelClusterToLevel[s.clusterId] != null) {
           seatsByLevel[levelClusterToLevel[s.clusterId]].push(s);
         }
@@ -563,7 +596,7 @@ function assignStudents(method) {
 
       // Seats not covered by any levelled cluster
       const levelledIds = new Set(levelledClusters.map(c => c.id));
-      const unlevelledSeats = seats.filter(s => !s.clusterId || !levelledIds.has(s.clusterId));
+      const unlevelledSeats = availableSeats.filter(s => !s.clusterId || !levelledIds.has(s.clusterId));
 
       // Partition students: each levelled pool gets as many students as it has seats
       const studentsByLevel = {};
@@ -622,14 +655,19 @@ function assignStudents(method) {
             let score = Math.random() * 0.02;
             (student.sitNear || []).forEach(nearId => {
               const ns = seats.find(s => s.studentId === nearId);
-              // High weight (500) ensures keep-together takes priority over ability grouping
               if (ns) score += 500 / (1 + seatDist(seat, ns));
             });
             (student.doNotSitNear || []).forEach(awayId => {
               const ns = seats.find(s => s.studentId === awayId);
-              // High weight (1000) ensures keep-apart takes priority over all other factors
               if (ns) score -= 1000 / (1 + seatDist(seat, ns));
             });
+            score += seatPositionScore(seat, student, room);
+            if (varyNeighbours && prevSet.size) {
+              seats.filter(s => s.studentId && seatDist(seat, s) <= 1.5).forEach(ns => {
+                const key = [student.id, ns.studentId].sort().join(':');
+                if (prevSet.has(key)) score -= 50;
+              });
+            }
             if (score > bestScore) { bestScore = score; best = seat; }
           }
           best.studentId = student.id;
@@ -667,7 +705,7 @@ function assignStudents(method) {
   }
 
   // ── Greedy placement with constraint scoring ───────────────
-  const pool = [...seats];
+  const pool = [...availableSeats];
 
   for (const student of students) {
     const available = pool.filter(s => !s.studentId);
@@ -681,15 +719,22 @@ function assignStudents(method) {
 
       (student.sitNear || []).forEach(nearId => {
         const ns = pool.find(s => s.studentId === nearId);
-        // High weight (500) ensures keep-together constraints take priority over other factors
         if (ns) score += 500 / (1 + seatDist(seat, ns));
       });
 
       (student.doNotSitNear || []).forEach(awayId => {
         const ns = pool.find(s => s.studentId === awayId);
-        // High weight (1000) ensures keep-apart constraints take priority over all other factors
         if (ns) score -= 1000 / (1 + seatDist(seat, ns));
       });
+
+      score += seatPositionScore(seat, student, room);
+
+      if (varyNeighbours && prevSet.size) {
+        seats.filter(s => s.studentId && seatDist(seat, s) <= 1.5).forEach(ns => {
+          const key = [student.id, ns.studentId].sort().join(':');
+          if (prevSet.has(key)) score -= 50;
+        });
+      }
 
       if (score > bestScore) { bestScore = score; best = seat; }
     }
@@ -706,6 +751,184 @@ function assignStudents(method) {
     seats:  room.seats.map(s => ({ id: s.id, studentId: s.studentId }))
   });
   if (room.assignmentHistory.length > 10) room.assignmentHistory.pop();
+}
+
+/* ============================================================
+   POSITION SCORING (Feature 5)
+============================================================ */
+/**
+ * Returns a score bonus (0–200) for placing a student with a position
+ * preference into a given seat, based on the room's front direction.
+ */
+function seatPositionScore(seat, student, room) {
+  if (!student.position) return 0;
+  const seats = room.seats.filter(isSeatAssignable);
+  if (!seats.length) return 0;
+  const fd = room.frontDirection || 'top';
+
+  const sRow = seat.row >= 0 ? seat.row : (seat.y != null ? seat.y / CELL_SIZE : 0);
+  const sCol = seat.col >= 0 ? seat.col : (seat.x != null ? seat.x / CELL_SIZE : 0);
+
+  const minR = Math.min(...seats.map(s => s.row >= 0 ? s.row : (s.y != null ? s.y / CELL_SIZE : 0)));
+  const maxR = Math.max(...seats.map(s => s.row >= 0 ? s.row : (s.y != null ? s.y / CELL_SIZE : 0)));
+  const minC = Math.min(...seats.map(s => s.col >= 0 ? s.col : (s.x != null ? s.x / CELL_SIZE : 0)));
+  const maxC = Math.max(...seats.map(s => s.col >= 0 ? s.col : (s.x != null ? s.x / CELL_SIZE : 0)));
+
+  const rowRatio = maxR > minR ? (sRow - minR) / (maxR - minR) : 0.5;
+  const colRatio = maxC > minC ? (sCol - minC) / (maxC - minC) : 0.5;
+
+  let frontRatio;
+  if      (fd === 'top')    frontRatio = rowRatio;
+  else if (fd === 'bottom') frontRatio = 1 - rowRatio;
+  else if (fd === 'left')   frontRatio = colRatio;
+  else                      frontRatio = 1 - colRatio;
+
+  if (student.position === 'front') return 200 * (1 - frontRatio);
+  if (student.position === 'back')  return 200 * frontRatio;
+  if (student.position === 'left')  return 200 * (1 - colRatio);
+  if (student.position === 'right') return 200 * colRatio;
+  return 0;
+}
+
+/* ============================================================
+   NEIGHBOUR PAIR TRACKING (Feature 8)
+============================================================ */
+function computeNeighbourPairs(room) {
+  const seats = room.seats.filter(isSeatAssignable);
+  const pairs = new Set();
+  seats.forEach(s => {
+    if (!s.studentId) return;
+    seats.forEach(n => {
+      if (!n.studentId || n.id === s.id) return;
+      if (seatDist(s, n) <= 1.5) {
+        const key = [s.studentId, n.studentId].sort().join(':');
+        pairs.add(key);
+      }
+    });
+  });
+  return pairs;
+}
+
+/* ============================================================
+   ROOM TEMPLATES (Feature 10)
+============================================================ */
+function saveRoomAsTemplate(room) {
+  const name = window.prompt('Template name:', room.name + ' layout');
+  if (!name || !name.trim()) return;
+  const tmpl = {
+    id: uid(),
+    name: name.trim(),
+    rows: room.rows, cols: room.cols,
+    layoutMode: room.layoutMode,
+    canvasW: room.canvasW, canvasH: room.canvasH,
+    clusters: JSON.parse(JSON.stringify(room.clusters)),
+    seats: room.seats.map(s => ({
+      id: s.id, row: s.row, col: s.col, x: s.x, y: s.y,
+      enabled: s.enabled, clusterId: s.clusterId, label: s.label,
+      pinned: false
+    }))
+  };
+  state.roomTemplates.push(tmpl);
+  scheduleAutosave();
+  alert('Template "' + tmpl.name + '" saved. Apply it to any room via "\u{1F4D0} Apply Template".');
+}
+
+function applyTemplateToRoom(room) {
+  if (!state.roomTemplates.length) {
+    alert('No templates saved yet. Save a layout template from another room first using "\u{1F4BE} Template".');
+    return;
+  }
+  const names = state.roomTemplates.map((t, i) => (i + 1) + '. ' + t.name).join('\n');
+  const choice = window.prompt('Choose a template (enter number):\n\n' + names);
+  const idx = parseInt(choice, 10) - 1;
+  if (isNaN(idx) || idx < 0 || idx >= state.roomTemplates.length) {
+    if (choice !== null) alert('Invalid choice.');
+    return;
+  }
+  if (!confirm('Apply template? The current room layout will be replaced (student assignments will be cleared).')) return;
+  const tmpl = state.roomTemplates[idx];
+  pushHistory();
+  const clusterIdMap = {};
+  room.clusters = tmpl.clusters.map(cl => {
+    const newId = uid();
+    clusterIdMap[cl.id] = newId;
+    return Object.assign({}, cl, { id: newId });
+  });
+  room.rows = tmpl.rows; room.cols = tmpl.cols;
+  room.layoutMode = tmpl.layoutMode;
+  room.canvasW = tmpl.canvasW; room.canvasH = tmpl.canvasH;
+  room.seats = tmpl.seats.map(s => Object.assign({}, s, {
+    id: uid(),
+    studentId: null,
+    clusterId: s.clusterId ? (clusterIdMap[s.clusterId] || null) : null
+  }));
+  scheduleAutosave();
+  renderAll();
+}
+
+/* ============================================================
+   TEACHER'S REGISTER (Feature 18)
+============================================================ */
+function showRegisterModal() {
+  const room = currentRoom();
+  const body = document.getElementById('register-body');
+  body.innerHTML = '';
+  if (!room) {
+    const p = document.createElement('p');
+    p.className = 'empty-msg';
+    p.textContent = 'No room selected.';
+    body.appendChild(p);
+    showModalEl('register-modal');
+    return;
+  }
+  const assignable = room.seats.filter(s => isSeatAssignable(s) && s.studentId);
+  if (!assignable.length) {
+    const p = document.createElement('p');
+    p.className = 'empty-msg';
+    p.textContent = 'No students are assigned in this room.';
+    body.appendChild(p);
+    showModalEl('register-modal');
+    return;
+  }
+  const fd = room.frontDirection || 'top';
+  const toPos = s => ({
+    r: s.row >= 0 ? s.row : (s.y != null ? s.y / CELL_SIZE : 0),
+    c: s.col >= 0 ? s.col : (s.x != null ? s.x / CELL_SIZE : 0)
+  });
+  const sorted = [...assignable].sort((a, b) => {
+    const ap = toPos(a), bp = toPos(b);
+    if (fd === 'top')    return ap.r !== bp.r ? ap.r - bp.r : ap.c - bp.c;
+    if (fd === 'bottom') return ap.r !== bp.r ? bp.r - ap.r : ap.c - bp.c;
+    if (fd === 'left')   return ap.c !== bp.c ? ap.c - bp.c : ap.r - bp.r;
+    return                                      ap.c !== bp.c ? bp.c - ap.c : ap.r - bp.r;
+  });
+  const table = document.createElement('table');
+  table.className = 'register-table';
+  const thead = document.createElement('thead');
+  const hdr = document.createElement('tr');
+  ['#', 'Name', 'Present \u2713', 'Notes'].forEach(h => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    hdr.appendChild(th);
+  });
+  thead.appendChild(hdr);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  sorted.forEach((seat, i) => {
+    const student = studentById(seat.studentId);
+    if (!student) return;
+    const tr = document.createElement('tr');
+    const tdNum  = document.createElement('td'); tdNum.textContent = String(i + 1);
+    const tdName = document.createElement('td'); tdName.textContent = student.name;
+    const tdChk  = document.createElement('td'); tdChk.style.textAlign = 'center';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; tdChk.appendChild(cb);
+    const tdNote = document.createElement('td'); tdNote.style.minWidth = '120px'; tdNote.innerHTML = '&nbsp;';
+    tr.appendChild(tdNum); tr.appendChild(tdName); tr.appendChild(tdChk); tr.appendChild(tdNote);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  body.appendChild(table);
+  showModalEl('register-modal');
 }
 
 /* ============================================================
@@ -764,6 +987,8 @@ function autosave() {
       rooms:         state.rooms,
       students:      state.students,
       classSets:     state.classSets,
+      customFlags:   state.customFlags,
+      roomTemplates: state.roomTemplates,
       currentRoomId: state.currentRoomId
     };
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
@@ -804,26 +1029,30 @@ function applyStateData(data) {
   if (!data || (data.version !== 1 && data.version !== 2)) return false;
   state.rooms         = (data.rooms    || []).map(normaliseRoom);
   state.students      = (data.students || []).map(normaliseStudent);
-  state.classSets     = data.classSets || [];
+  state.classSets     = data.classSets     || [];
+  state.customFlags   = data.customFlags   || [];
+  state.roomTemplates = data.roomTemplates || [];
   state.currentRoomId = data.currentRoomId ?? state.rooms.find(r => !r.archived)?.id ?? null;
   state.mode              = 'move';
   state.activeClusterId   = null;
   state.activeClassSetId  = null;
+  state.auditMode         = false;
   return true;
 }
 
 /** Ensure a room object has all expected fields (backwards-compat). */
 function normaliseRoom(room) {
   return Object.assign({
-    archived:          false,
-    clusters:          [],
-    seats:             [],
-    layoutMode:        'grid',
-    frontDirection:    'top',
-    canvasW:           900,
-    canvasH:           700,
-    assignmentHistory: [],
-    snapGrid:          0    // 0 = off; positive integer = snap size in px
+    archived:           false,
+    clusters:           [],
+    seats:              [],
+    layoutMode:         'grid',
+    frontDirection:     'top',
+    canvasW:            900,
+    canvasH:            700,
+    assignmentHistory:  [],
+    snapGrid:           0,    // 0 = off; positive integer = snap size in px
+    prevNeighbourPairs: []    // serialised Set of "id1:id2" strings from last assignment
   }, room);
 }
 
@@ -833,6 +1062,8 @@ function saveJSON() {
     rooms:         state.rooms,
     students:      state.students,
     classSets:     state.classSets,
+    customFlags:   state.customFlags,
+    roomTemplates: state.roomTemplates,
     currentRoomId: state.currentRoomId
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1314,7 +1545,7 @@ function showSeatTooltip(studentId, anchorEl) {
   if (!tooltip) return;
 
   const flags = (student.flags || []).map(key => {
-    const f = STUDENT_FLAGS.find(x => x.key === key);
+    const f = allFlags().find(x => x.key === key);
     return f ? `<span class="tt-flag" style="background:${f.colour}">${f.label}</span>` : '';
   }).join('');
 
@@ -1362,6 +1593,13 @@ function showSeatContextMenu(clientX, clientY, seat, room) {
   const divider  = menu.querySelector('.seat-ctx-divider');
   if (clearBtn) clearBtn.style.display = hasStu ? '' : 'none';
   if (divider)  divider.style.display  = hasStu ? '' : 'none';
+
+  // Show pin/unpin button only when a student is seated
+  const pinBtn = document.getElementById('seat-ctx-pin-btn');
+  if (pinBtn) {
+    pinBtn.style.display = hasStu ? '' : 'none';
+    pinBtn.textContent   = seat.pinned ? '\u{1F4CC} Unpin seat' : '\u{1F4CC} Pin student here';
+  }
 
   menu.style.left    = clientX + 'px';
   menu.style.top     = clientY + 'px';
@@ -1486,7 +1724,7 @@ function renderStudentList() {
 
 function buildStudentCard(student, isSeated) {
   const card = document.createElement('div');
-  card.className = 'student-card' + (isSeated ? ' is-seated' : '');
+  card.className = 'student-card' + (isSeated ? ' is-seated' : '') + (student.absent ? ' student-absent' : '');
   card.dataset.studentId = student.id;
   card.draggable = true;
 
@@ -1519,21 +1757,22 @@ function buildStudentCard(student, isSeated) {
   det.className = 's-details';
   const parts = [];
   if (student.gender) parts.push(student.gender.charAt(0).toUpperCase() + student.gender.slice(1));
-  if (student.marks != null) parts.push(`${student.marks}%`);
-  if (student.sitNear.length)     parts.push(`↑${student.sitNear.length}`);
-  if (student.doNotSitNear.length) parts.push(`↓${student.doNotSitNear.length}`);
-  det.textContent = parts.join(' · ');
+  if (student.marks != null) parts.push(student.marks + '%');
+  if (student.position) parts.push({ front: '\u2191Front', back: '\u2193Back', left: '\u2190Left', right: '\u2192Right' }[student.position] || student.position);
+  if (student.sitNear.length)     parts.push('\u2191' + student.sitNear.length);
+  if (student.doNotSitNear.length) parts.push('\u2193' + student.doNotSitNear.length);
+  det.textContent = parts.join(' \u00b7 ');
 
   info.appendChild(nameEl);
   info.appendChild(det);
 
-  // Flag pills
+  // Flag pills — use allFlags() so custom flags also render
   const flags = student.flags || [];
   if (flags.length) {
     const flagsRow = document.createElement('div');
     flagsRow.className = 'student-flags';
     flags.forEach(key => {
-      const def = STUDENT_FLAGS.find(f => f.key === key);
+      const def = allFlags().find(f => f.key === key);
       if (!def) return;
       const pill = document.createElement('span');
       pill.className = 'flag-pill';
@@ -1548,24 +1787,38 @@ function buildStudentCard(student, isSeated) {
   const actions = document.createElement('div');
   actions.className = 's-actions';
 
+  // Absent toggle (Feature 2)
+  const absentBtn = document.createElement('button');
+  absentBtn.className = 'btn-icon';
+  absentBtn.textContent = student.absent ? '\u2705' : '\u{1F3E0}';
+  absentBtn.title = student.absent ? 'Mark present' : 'Mark absent';
+  absentBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    student.absent = !student.absent;
+    scheduleAutosave();
+    renderStudentList();
+    renderGrid();
+  });
+
   const editBtn = document.createElement('button');
   editBtn.className = 'btn-icon';
-  editBtn.textContent = '✏️';
+  editBtn.textContent = '\u270F\uFE0F';
   editBtn.title = 'Edit student';
   editBtn.addEventListener('click', e => { e.stopPropagation(); openModal('student', student.id); });
 
   const delBtn = document.createElement('button');
   delBtn.className = 'btn-icon';
-  delBtn.textContent = '🗑';
+  delBtn.textContent = '\u{1F5D1}';
   delBtn.title = 'Delete student';
   delBtn.addEventListener('click', e => {
     e.stopPropagation();
-    if (confirm(`Delete "${student.name}"?`)) {
+    if (confirm('Delete "' + student.name + '"?')) {
       studentDelete(student.id);
       renderAll();
     }
   });
 
+  actions.appendChild(absentBtn);
   actions.appendChild(editBtn);
   actions.appendChild(delBtn);
 
@@ -1723,6 +1976,18 @@ function renderRegularGrid(room, grid) {
         cell.classList.add('has-student');
         const student = studentById(seat.studentId);
         if (student) cell.appendChild(buildMiniStudent(student, seat.id));
+        // Audit mode (Feature 20)
+        if (state.auditMode && student) {
+          if (hasSeatViolation(seat, student, room)) cell.classList.add('audit-violation');
+        }
+        // Pin badge (Feature 9)
+        if (seat.pinned) {
+          const pb = document.createElement('span');
+          pb.className = 'pin-badge';
+          pb.textContent = '\u{1F4CC}';
+          pb.title = 'Pinned';
+          cell.appendChild(pb);
+        }
       }
 
       cell.addEventListener('click', () => {
@@ -1807,6 +2072,18 @@ function renderFreeformGrid(room, grid) {
         const mini = buildMiniStudent(student, seat.id);
         if (state.mode === 'layout') mini.draggable = false;
         cell.appendChild(mini);
+        // Audit mode (Feature 20)
+        if (state.auditMode) {
+          if (hasSeatViolation(seat, student, room)) cell.classList.add('audit-violation');
+        }
+        // Pin badge (Feature 9)
+        if (seat.pinned) {
+          const pb = document.createElement('span');
+          pb.className = 'pin-badge';
+          pb.textContent = '\u{1F4CC}';
+          pb.title = 'Pinned';
+          cell.appendChild(pb);
+        }
       }
     }
 
@@ -1937,6 +2214,30 @@ function attachFreeformDrag(cell, seat, room) {
 }
 
 /* ── Shared seat helpers ─────────────────────────────────── */
+
+/**
+ * Returns true if the seated student violates any constraint in audit mode.
+ * Checks: doNotSitNear proximity, sitNear not satisfied, position preference.
+ */
+function hasSeatViolation(seat, student, room) {
+  const seats = room.seats.filter(isSeatAssignable);
+  // doNotSitNear violation
+  const doNotViolated = (student.doNotSitNear || []).some(awayId => {
+    const ns = seats.find(s => s.studentId === awayId);
+    return ns && seatDist(seat, ns) <= 2;
+  });
+  if (doNotViolated) return true;
+  // sitNear unsatisfied
+  const sitNearMissed = (student.sitNear || []).some(nearId => {
+    const ns = seats.find(s => s.studentId === nearId);
+    return ns && seatDist(seat, ns) > 2;
+  });
+  if (sitNearMissed) return true;
+  // Position preference (rough check via score threshold)
+  if (student.position && seatPositionScore(seat, student, room) < 50) return true;
+  return false;
+}
+
 function applyClusterStyling(cell, seat, room) {
   if (!seat.clusterId) return;
   const cl = room.clusters.find(x => x.id === seat.clusterId);
@@ -1998,7 +2299,7 @@ function showInfoBar(text) {
 
 function buildMiniStudent(student, seatId) {
   const wrap = document.createElement('div');
-  wrap.className = 'mini-student';
+  wrap.className = 'mini-student' + (student.absent ? ' mini-absent' : '');
   wrap.draggable = true;
 
   wrap.addEventListener('dragstart', e => {
@@ -2022,18 +2323,27 @@ function buildMiniStudent(student, seatId) {
   nameEl.className = 'mini-name';
   // Show first name only (or full if short enough)
   const firstName = student.name.split(' ')[0];
-  nameEl.textContent = firstName.length > 8 ? firstName.slice(0, 7) + '…' : firstName;
+  nameEl.textContent = firstName.length > 8 ? firstName.slice(0, 7) + '\u2026' : firstName;
 
   wrap.appendChild(av);
   wrap.appendChild(nameEl);
 
-  // Flag dots
+  // Notes indicator dot (Feature 3)
+  if (student.notes && student.notes.trim()) {
+    const nd = document.createElement('span');
+    nd.className = 'notes-dot';
+    nd.title = 'Has notes';
+    nd.textContent = '\u{1F4DD}';
+    wrap.appendChild(nd);
+  }
+
+  // Flag dots — use allFlags() so custom flags also render
   const flags = student.flags || [];
   if (flags.length) {
     const flagsRow = document.createElement('div');
     flagsRow.className = 'mini-flags';
     flags.forEach(key => {
-      const def = STUDENT_FLAGS.find(f => f.key === key);
+      const def = allFlags().find(f => f.key === key);
       if (!def) return;
       const dot = document.createElement('span');
       dot.className = 'mini-flag-dot';
@@ -2186,26 +2496,10 @@ function openModal(type, id = null) {
     document.getElementById('s-gender').value = s?.gender ?? '';
     document.getElementById('s-marks').value  = s?.marks  != null ? s.marks : '';
     document.getElementById('s-notes').value  = s?.notes  ?? '';
+    document.getElementById('s-position').value = s?.position ?? '';
 
-    // Flags checkboxes
-    const flagsDiv = document.getElementById('flag-checkboxes');
-    flagsDiv.innerHTML = '';
-    STUDENT_FLAGS.forEach(f => {
-      const label = document.createElement('label');
-      label.className = 'flag-chk-label';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.value = f.key;
-      cb.name  = 'student-flag';
-      cb.checked = s ? (s.flags || []).includes(f.key) : false;
-      const dot = document.createElement('span');
-      dot.className = 'flag-dot';
-      dot.style.backgroundColor = f.colour;
-      label.appendChild(cb);
-      label.appendChild(dot);
-      label.appendChild(document.createTextNode(' ' + f.label));
-      flagsDiv.appendChild(label);
-    });
+    // Flags checkboxes — built-in + custom
+    renderFlagCheckboxes(s);
 
     // Photo preview
     const preview = document.getElementById('photo-preview');
@@ -2248,6 +2542,54 @@ function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
   editCtx    = { type: null, id: null };
   pendingPhoto = null;
+}
+
+/* ── Custom flags (Feature 4) ────────────────────────────── */
+function renderFlagCheckboxes(student) {
+  const flagsDiv = document.getElementById('flag-checkboxes');
+  flagsDiv.innerHTML = '';
+  allFlags().forEach(f => {
+    const label = document.createElement('label');
+    label.className = 'flag-chk-label';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = f.key;
+    cb.name  = 'student-flag';
+    cb.checked = student ? (student.flags || []).includes(f.key) : false;
+    const dot = document.createElement('span');
+    dot.className = 'flag-dot';
+    dot.style.backgroundColor = f.colour;
+    label.appendChild(cb);
+    label.appendChild(dot);
+    label.appendChild(document.createTextNode(' ' + f.label));
+    flagsDiv.appendChild(label);
+  });
+  // "＋ Add flag" button
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'btn btn-secondary btn-sm';
+  addBtn.style.marginTop = '6px';
+  addBtn.textContent = '\uFF0B Custom flag\u2026';
+  addBtn.addEventListener('click', () => {
+    addCustomFlag(student);
+  });
+  flagsDiv.appendChild(addBtn);
+}
+
+function addCustomFlag(student) {
+  const name = window.prompt('New flag name (e.g. "LAC", "EHC"):');
+  if (!name || !name.trim()) return;
+  const key = name.trim().replace(/\s+/g, '_');
+  if (allFlags().find(f => f.key === key)) {
+    alert('A flag with this name already exists.'); return;
+  }
+  const colour = window.prompt('Flag colour (hex, e.g. #9b59b6):', '#9b59b6');
+  if (!colour || !/^#[0-9a-fA-F]{3,6}$/.test(colour.trim())) {
+    alert('Invalid colour — please enter a hex colour like #9b59b6.'); return;
+  }
+  state.customFlags.push({ key, label: name.trim(), colour: colour.trim() });
+  scheduleAutosave();
+  renderFlagCheckboxes(student);
 }
 
 function buildConstraintLists(excludeId, sitNear, doNotSitNear) {
@@ -2322,8 +2664,10 @@ function saveStudentModal() {
     .map(cb => cb.value);
 
   const notes = document.getElementById('s-notes').value.trim();
+  const position = document.getElementById('s-position').value;
 
   const persist = (photo) => {
+    const existingAbsent = editCtx.id ? (studentById(editCtx.id)?.absent ?? false) : false;
     const data = {
       name,
       gender: document.getElementById('s-gender').value,
@@ -2332,7 +2676,9 @@ function saveStudentModal() {
       notes,
       flags,
       sitNear,
-      doNotSitNear
+      doNotSitNear,
+      position,
+      absent: existingAbsent
     };
     if (editCtx.id) {
       studentUpdate(editCtx.id, data);
@@ -2855,11 +3201,47 @@ function initEvents() {
     if (seat && seat.studentId) {
       pushHistory();
       seat.studentId = null;
+      seat.pinned    = false;
       renderGrid();
       renderStudentList();
       scheduleAutosave();
     }
     hideSeatContextMenu();
+  });
+
+  // ── Pin/unpin button in seat context menu (Feature 9) ─────
+  document.getElementById('seat-ctx-pin-btn').addEventListener('click', () => {
+    const room = state.rooms.find(r => r.id === ctxMenuRoomId);
+    const seat = room?.seats.find(s => s.id === ctxMenuSeatId);
+    if (seat) {
+      seat.pinned = !seat.pinned;
+      renderGrid();
+      scheduleAutosave();
+    }
+    hideSeatContextMenu();
+  });
+
+  // ── Register button (Feature 18) ─────────────────────────
+  document.getElementById('register-btn').addEventListener('click', showRegisterModal);
+  document.getElementById('register-print-btn').addEventListener('click', () => window.print());
+
+  // ── Audit mode button (Feature 20) ───────────────────────
+  document.getElementById('audit-btn').addEventListener('click', () => {
+    state.auditMode = !state.auditMode;
+    document.getElementById('audit-btn').classList.toggle('active-archived', state.auditMode);
+    renderGrid();
+  });
+
+  // ── Room template buttons (Feature 10) ───────────────────
+  document.getElementById('save-template-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) { alert('Please select a room first.'); return; }
+    saveRoomAsTemplate(room);
+  });
+  document.getElementById('apply-template-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) { alert('Please select a room first.'); return; }
+    applyTemplateToRoom(room);
   });
 
   // Hide seat context menu on any outside click

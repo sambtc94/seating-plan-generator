@@ -865,3 +865,79 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn:disabled:hover { opacity: .5; }
 .btn:disabled:active { transform: none; }
+
+/* ============================================================
+   NEW FEATURES — appended
+============================================================ */
+
+/* Feature 2: Absent student */
+.student-absent { opacity: 0.45; text-decoration: line-through; }
+.mini-absent .mini-avatar { opacity: 0.4; }
+.mini-absent .mini-name   { opacity: 0.4; }
+
+/* Feature 3: Notes dot on seat cell */
+.notes-dot {
+  font-size: 9px;
+  line-height: 1;
+  cursor: default;
+  margin-left: 2px;
+  display: inline-block;
+}
+
+/* Feature 5: Position preference label in toolbar checkbox */
+.toolbar-chk-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Feature 9: Pin badge on seat cell */
+.pin-badge {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Feature 20: Audit violation highlight */
+.audit-violation {
+  outline: 2px solid #e74c3c !important;
+  outline-offset: -2px;
+}
+
+/* Feature 18: Register table */
+.register-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.register-table th,
+.register-table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+}
+.register-table th {
+  background: var(--bg);
+  font-weight: 600;
+  text-align: left;
+}
+.register-table tr:nth-child(even) td {
+  background: var(--bg);
+}
+
+@media print {
+  /* Hide all UI chrome when printing the register */
+  body > *:not(#modal-overlay) { display: none !important; }
+  #modal-overlay                { position: static !important; background: transparent !important; }
+  .modal-overlay                { position: static !important; }
+  #register-modal               { display: block !important; position: static !important; box-shadow: none !important; }
+  .modal-footer                 { display: none !important; }
+  .modal-header button          { display: none !important; }
+}
