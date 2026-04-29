@@ -94,6 +94,20 @@ function showSeatTooltip(studentId, anchorEl) {
     (flags ? `<div class="tt-flags">${flags}</div>` : '') +
     (student.notes ? `<div class="tt-notes">${student.notes}</div>` : '');
 
+  if (state.auditMode) {
+    const room = currentRoom();
+    const seat = room?.seats.find(s => s.studentId === studentId);
+    if (seat) {
+      const reasons = getSeatViolationReasons(seat, student, room);
+      if (reasons.length) {
+        tooltip.innerHTML +=
+          `<div class="tt-violations">` +
+          reasons.map(r => `<div class="tt-violation">⚠ ${r}</div>`).join('') +
+          `</div>`;
+      }
+    }
+  }
+
   const rect = anchorEl.getBoundingClientRect();
   const ttW  = 210;
   let left = rect.right + 8;
@@ -737,26 +751,40 @@ function attachFreeformDrag(cell, seat, room) {
 /* ── Shared seat helpers ─────────────────────────────────── */
 
 /**
+ * Returns an array of human-readable violation strings for a seated student.
+ * Checks: doNotSitNear proximity, sitNear not satisfied, position preference.
+ */
+function getSeatViolationReasons(seat, student, room) {
+  const seats = room.seats.filter(isSeatAssignable);
+  const reasons = [];
+  // doNotSitNear violations
+  (student.doNotSitNear || []).forEach(awayId => {
+    const ns = seats.find(s => s.studentId === awayId);
+    if (ns && seatDist(seat, ns) <= 2) {
+      const name = studentById(awayId)?.name ?? awayId;
+      reasons.push(`Separated from ${name}`);
+    }
+  });
+  // sitNear unsatisfied
+  (student.sitNear || []).forEach(nearId => {
+    const ns = seats.find(s => s.studentId === nearId);
+    if (ns && seatDist(seat, ns) > 2) {
+      const name = studentById(nearId)?.name ?? nearId;
+      reasons.push(`Not near ${name}`);
+    }
+  });
+  // Position preference
+  if (student.position && seatPositionScore(seat, student, room) < 50)
+    reasons.push(`Position preference (${student.position}) not met`);
+  return reasons;
+}
+
+/**
  * Returns true if the seated student violates any constraint in audit mode.
  * Checks: doNotSitNear proximity, sitNear not satisfied, position preference.
  */
 function hasSeatViolation(seat, student, room) {
-  const seats = room.seats.filter(isSeatAssignable);
-  // doNotSitNear violation
-  const doNotViolated = (student.doNotSitNear || []).some(awayId => {
-    const ns = seats.find(s => s.studentId === awayId);
-    return ns && seatDist(seat, ns) <= 2;
-  });
-  if (doNotViolated) return true;
-  // sitNear unsatisfied
-  const sitNearMissed = (student.sitNear || []).some(nearId => {
-    const ns = seats.find(s => s.studentId === nearId);
-    return ns && seatDist(seat, ns) > 2;
-  });
-  if (sitNearMissed) return true;
-  // Position preference (rough check via score threshold)
-  if (student.position && seatPositionScore(seat, student, room) < 50) return true;
-  return false;
+  return getSeatViolationReasons(seat, student, room).length > 0;
 }
 
 function applyClusterStyling(cell, seat, room) {
@@ -810,6 +838,14 @@ function showStudentHover(studentId) {
     parts.push(`Sit near: ${s.sitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
   if (s.doNotSitNear.length)
     parts.push(`Separate from: ${s.doNotSitNear.map(id => studentById(id)?.name ?? id).join(', ')}`);
+  if (state.auditMode) {
+    const room = currentRoom();
+    const seat = room?.seats.find(st => st.studentId === studentId);
+    if (seat) {
+      const reasons = getSeatViolationReasons(seat, s, room);
+      if (reasons.length) parts.push(`⚠ ${reasons.join('; ')}`);
+    }
+  }
   showInfoBar(parts.join('  |  '));
 }
 
