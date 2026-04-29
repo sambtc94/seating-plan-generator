@@ -869,71 +869,6 @@ function applyTemplateToRoom(room) {
 }
 
 /* ============================================================
-   TEACHER'S REGISTER (Feature 18)
-============================================================ */
-function showRegisterModal() {
-  const room = currentRoom();
-  const body = document.getElementById('register-body');
-  body.innerHTML = '';
-  if (!room) {
-    const p = document.createElement('p');
-    p.className = 'empty-msg';
-    p.textContent = 'No room selected.';
-    body.appendChild(p);
-    showModalEl('register-modal');
-    return;
-  }
-  const assignable = room.seats.filter(s => isSeatAssignable(s) && s.studentId);
-  if (!assignable.length) {
-    const p = document.createElement('p');
-    p.className = 'empty-msg';
-    p.textContent = 'No students are assigned in this room.';
-    body.appendChild(p);
-    showModalEl('register-modal');
-    return;
-  }
-  const fd = room.frontDirection || 'top';
-  const toPos = s => ({
-    r: s.row >= 0 ? s.row : (s.y != null ? s.y / CELL_SIZE : 0),
-    c: s.col >= 0 ? s.col : (s.x != null ? s.x / CELL_SIZE : 0)
-  });
-  const sorted = [...assignable].sort((a, b) => {
-    const ap = toPos(a), bp = toPos(b);
-    if (fd === 'top')    return ap.r !== bp.r ? ap.r - bp.r : ap.c - bp.c;
-    if (fd === 'bottom') return ap.r !== bp.r ? bp.r - ap.r : ap.c - bp.c;
-    if (fd === 'left')   return ap.c !== bp.c ? ap.c - bp.c : ap.r - bp.r;
-    return                                      ap.c !== bp.c ? bp.c - ap.c : ap.r - bp.r;
-  });
-  const table = document.createElement('table');
-  table.className = 'register-table';
-  const thead = document.createElement('thead');
-  const hdr = document.createElement('tr');
-  ['#', 'Name', 'Present \u2713', 'Notes'].forEach(h => {
-    const th = document.createElement('th');
-    th.textContent = h;
-    hdr.appendChild(th);
-  });
-  thead.appendChild(hdr);
-  table.appendChild(thead);
-  const tbody = document.createElement('tbody');
-  sorted.forEach((seat, i) => {
-    const student = studentById(seat.studentId);
-    if (!student) return;
-    const tr = document.createElement('tr');
-    const tdNum  = document.createElement('td'); tdNum.textContent = String(i + 1);
-    const tdName = document.createElement('td'); tdName.textContent = student.name;
-    const tdChk  = document.createElement('td'); tdChk.style.textAlign = 'center';
-    const cb = document.createElement('input'); cb.type = 'checkbox'; tdChk.appendChild(cb);
-    const tdNote = document.createElement('td'); tdNote.style.minWidth = '120px'; tdNote.innerHTML = '&nbsp;';
-    tr.appendChild(tdNum); tr.appendChild(tdName); tr.appendChild(tdChk); tr.appendChild(tdNote);
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  body.appendChild(table);
-  showModalEl('register-modal');
-}
-
-/* ============================================================
    DRAG & DROP
 ============================================================ */
 
@@ -3236,14 +3171,6 @@ function initEvents() {
       scheduleAutosave();
     }
     hideSeatContextMenu();
-  });
-
-  // ── Register button (Feature 18) ─────────────────────────
-  document.getElementById('register-btn').addEventListener('click', showRegisterModal);
-  document.getElementById('register-print-btn').addEventListener('click', () => {
-    document.body.classList.add('printing-register');
-    window.print();
-    document.body.classList.remove('printing-register');
   });
 
   // ── Audit mode button (Feature 20) ───────────────────────
