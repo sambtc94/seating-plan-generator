@@ -1012,32 +1012,3 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
   outline-offset: -2px;
 }
 
-/* Feature 18: Register table */
-.register-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.register-table th,
-.register-table td {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
-}
-.register-table th {
-  background: var(--bg);
-  font-weight: 600;
-  text-align: left;
-}
-.register-table tr:nth-child(even) td {
-  background: var(--bg);
-}
-
-@media print {
-  /* Hide all UI chrome when printing the register */
-  body > *:not(#modal-overlay) { display: none !important; }
-  #modal-overlay                { position: static !important; background: transparent !important; }
-  .modal-overlay                { position: static !important; }
-  #register-modal               { display: block !important; position: static !important; box-shadow: none !important; }
-  .modal-footer                 { display: none !important; }
-  .modal-header button          { display: none !important; }
-}

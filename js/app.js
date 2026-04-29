@@ -676,7 +676,9 @@ function assignStudents(method) {
 
       // Place each ability group into its designated seats
       levels.forEach(lvl => greedyPlace(studentsByLevel[lvl], seatsByLevel[lvl]));
-      greedyPlace(remainingStudents, unlevelledSeats);
+      // Remaining students (overflow from sitNear adjustments, or extras beyond
+      // levelled-cluster capacity) go into any still-empty available seat.
+      greedyPlace(remainingStudents, availableSeats);
 
       // Skip the default greedy loop below
       room.assignmentHistory = room.assignmentHistory || [];
@@ -867,71 +869,6 @@ function applyTemplateToRoom(room) {
 }
 
 /* ============================================================
-   TEACHER'S REGISTER (Feature 18)
-============================================================ */
-function showRegisterModal() {
-  const room = currentRoom();
-  const body = document.getElementById('register-body');
-  body.innerHTML = '';
-  if (!room) {
-    const p = document.createElement('p');
-    p.className = 'empty-msg';
-    p.textContent = 'No room selected.';
-    body.appendChild(p);
-    showModalEl('register-modal');
-    return;
-  }
-  const assignable = room.seats.filter(s => isSeatAssignable(s) && s.studentId);
-  if (!assignable.length) {
-    const p = document.createElement('p');
-    p.className = 'empty-msg';
-    p.textContent = 'No students are assigned in this room.';
-    body.appendChild(p);
-    showModalEl('register-modal');
-    return;
-  }
-  const fd = room.frontDirection || 'top';
-  const toPos = s => ({
-    r: s.row >= 0 ? s.row : (s.y != null ? s.y / CELL_SIZE : 0),
-    c: s.col >= 0 ? s.col : (s.x != null ? s.x / CELL_SIZE : 0)
-  });
-  const sorted = [...assignable].sort((a, b) => {
-    const ap = toPos(a), bp = toPos(b);
-    if (fd === 'top')    return ap.r !== bp.r ? ap.r - bp.r : ap.c - bp.c;
-    if (fd === 'bottom') return ap.r !== bp.r ? bp.r - ap.r : ap.c - bp.c;
-    if (fd === 'left')   return ap.c !== bp.c ? ap.c - bp.c : ap.r - bp.r;
-    return                                      ap.c !== bp.c ? bp.c - ap.c : ap.r - bp.r;
-  });
-  const table = document.createElement('table');
-  table.className = 'register-table';
-  const thead = document.createElement('thead');
-  const hdr = document.createElement('tr');
-  ['#', 'Name', 'Present \u2713', 'Notes'].forEach(h => {
-    const th = document.createElement('th');
-    th.textContent = h;
-    hdr.appendChild(th);
-  });
-  thead.appendChild(hdr);
-  table.appendChild(thead);
-  const tbody = document.createElement('tbody');
-  sorted.forEach((seat, i) => {
-    const student = studentById(seat.studentId);
-    if (!student) return;
-    const tr = document.createElement('tr');
-    const tdNum  = document.createElement('td'); tdNum.textContent = String(i + 1);
-    const tdName = document.createElement('td'); tdName.textContent = student.name;
-    const tdChk  = document.createElement('td'); tdChk.style.textAlign = 'center';
-    const cb = document.createElement('input'); cb.type = 'checkbox'; tdChk.appendChild(cb);
-    const tdNote = document.createElement('td'); tdNote.style.minWidth = '120px'; tdNote.innerHTML = '&nbsp;';
-    tr.appendChild(tdNum); tr.appendChild(tdName); tr.appendChild(tdChk); tr.appendChild(tdNote);
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  body.appendChild(table);
-  showModalEl('register-modal');
-}
-
-/* ============================================================
    DRAG & DROP
 ============================================================ */
 
@@ -1101,36 +1038,26 @@ function printSeatingPlan() {
  * Import students from a JSON array.
  * Supports constraint references by student name (resolved to IDs).
  */
-function importStudents(arr) {
-  if (!Array.isArray(arr)) throw new Error('Expected a JSON array of student objects.');
-
-  const nameMap = {};
-
-  // Pass 1: create students
-  const pairs = arr.map(raw => {
-    const s = studentCreate({
-      name:   raw.name,
-      gender: raw.gender,
-      marks:  raw.marks,
-      photo:  raw.photo
-    });
-    nameMap[raw.name] = s.id;
-    return { s, raw };
+/* ============================================================
+   CSV EXPORT (STUDENTS)
+============================================================ */
+function exportStudentsCSV() {
+  const rows = [['name', 'gender', 'marks']];
+  state.students.forEach(s => {
+    rows.push([s.name, s.gender || '', s.marks != null ? String(s.marks) : '']);
   });
-
-  // Pass 2: resolve constraint references (by name or existing ID)
-  pairs.forEach(({ s, raw }) => {
-    if (Array.isArray(raw.sitNear)) {
-      s.sitNear = raw.sitNear
-        .map(n => nameMap[n] ?? (state.students.find(x => x.id === n)?.id))
-        .filter(Boolean);
-    }
-    if (Array.isArray(raw.doNotSitNear)) {
-      s.doNotSitNear = raw.doNotSitNear
-        .map(n => nameMap[n] ?? (state.students.find(x => x.id === n)?.id))
-        .filter(Boolean);
-    }
-  });
+  const csv = rows.map(r =>
+    r.map(f => (/[,"\r\n]/.test(f) ? `"${f.replace(/"/g, '""')}"` : f)).join(',')
+  ).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'students.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**
@@ -1233,23 +1160,7 @@ function parseCSVRows(csvText) {
 }
 
 /* ============================================================
-   CSV TEMPLATE DOWNLOAD
-============================================================ */
-function downloadCSVTemplate() {
-  const csvContent = 'name,gender,marks\nAlice,female,85\nBob,male,72\n';
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = 'students_template.csv';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-/* ============================================================
-   CSV EXPORT
+   CSV EXPORT (SEATING)
 ============================================================ */
 function exportCSV() {
   const room = currentRoom();
@@ -1716,7 +1627,7 @@ function renderStudentList() {
     : visible;
 
   if (!state.students.length) {
-    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 JSON" / "📥 CSV" to import.</div>';
+    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 CSV" to import.</div>';
     return;
   }
 
@@ -3033,30 +2944,10 @@ function initEvents() {
   document.getElementById('add-student-btn').addEventListener('click',
     () => openModal('student'));
 
-  document.getElementById('import-json-btn').addEventListener('click',
-    () => document.getElementById('import-file').click()
-  );
-  document.getElementById('import-file').addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = evt => {
-      try {
-        importStudents(JSON.parse(evt.target.result));
-        renderAll();
-        alert('Students imported successfully.');
-      } catch (err) {
-        alert('Import error: ' + err.message);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  });
-
   document.getElementById('import-csv-btn').addEventListener('click',
     () => document.getElementById('import-csv-file').click()
   );
-  document.getElementById('csv-template-btn').addEventListener('click', downloadCSVTemplate);
+  document.getElementById('export-students-btn').addEventListener('click', exportStudentsCSV);
   document.getElementById('import-csv-file').addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
@@ -3190,7 +3081,9 @@ function initEvents() {
   document.getElementById('export-csv-btn').addEventListener('click', exportCSV);
 
   // ── Seat context menu ────────────────────────────────────
-  document.querySelectorAll('.seat-ctx-item').forEach(btn => {
+  // Only attach the label-change handler to items that carry a data-label attribute;
+  // the clear and pin buttons have their own dedicated handlers below.
+  document.querySelectorAll('.seat-ctx-item[data-label]').forEach(btn => {
     btn.addEventListener('click', () => {
       const room = state.rooms.find(r => r.id === ctxMenuRoomId);
       const seat = room?.seats.find(s => s.id === ctxMenuSeatId);
@@ -3233,10 +3126,6 @@ function initEvents() {
     }
     hideSeatContextMenu();
   });
-
-  // ── Register button (Feature 18) ─────────────────────────
-  document.getElementById('register-btn').addEventListener('click', showRegisterModal);
-  document.getElementById('register-print-btn').addEventListener('click', () => window.print());
 
   // ── Audit mode button (Feature 20) ───────────────────────
   document.getElementById('audit-btn').addEventListener('click', () => {

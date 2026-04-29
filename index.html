@@ -57,7 +57,6 @@
     <button class="btn btn-secondary btn-sm" id="redo-btn" title="Redo (Ctrl+Y)" disabled>↪ Redo</button>
     <button class="btn btn-secondary btn-sm" id="stats-btn" title="Show assignment statistics">📊 Stats</button>
     <button class="btn btn-secondary btn-sm" id="history-btn" title="Show assignment history">🕐 History</button>
-    <button class="btn btn-secondary btn-sm" id="register-btn" title="Print seating-order register">📋 Register</button>
     <button class="btn btn-secondary btn-sm" id="audit-btn" title="Highlight constraint violations">🔍 Audit</button>
   </div>
   <div class="toolbar-group" id="cluster-toolbar" style="display:none">
@@ -85,11 +84,9 @@
       <h2>Students</h2>
       <div class="panel-actions">
         <button class="btn btn-primary  btn-sm" id="add-student-btn">＋ Add</button>
-        <button class="btn btn-secondary btn-sm" id="import-json-btn">📥 JSON</button>
-        <input type="file" id="import-file" accept=".json" style="display:none" />
         <button class="btn btn-secondary btn-sm" id="import-csv-btn">📥 CSV</button>
         <input type="file" id="import-csv-file" accept=".csv" style="display:none" />
-        <button class="btn btn-secondary btn-sm" id="csv-template-btn" title="Download a blank CSV template for import">📋 Template</button>
+        <button class="btn btn-secondary btn-sm" id="export-students-btn" title="Export students as CSV (empty if no students, re-importable as template)">📤 Export</button>
       </div>
     </div>
     <div class="student-search-bar">
@@ -357,19 +354,6 @@
     <div class="modal-body" id="history-body"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" data-close="history-modal">Close</button>
-    </div>
-  </div>
-
-  <!-- REGISTER MODAL -->
-  <div class="modal modal-wide" id="register-modal">
-    <div class="modal-header">
-      <h3>Seating Register</h3>
-      <button class="modal-close" data-close="register-modal">✕</button>
-    </div>
-    <div class="modal-body" id="register-body"></div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" id="register-print-btn">🖨 Print</button>
-      <button class="btn btn-secondary" data-close="register-modal">Close</button>
     </div>
   </div>
 
