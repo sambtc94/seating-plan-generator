@@ -507,7 +507,7 @@ function buildConstraintLists(excludeId, sitNear, doNotSitNear) {
   const nsnEl = document.getElementById('no-sit-near-list');
   snEl.innerHTML = nsnEl.innerHTML = '';
 
-  const others = state.students.filter(s => s.id !== excludeId);
+  const others = visibleStudents().filter(s => s.id !== excludeId);
   if (!others.length) {
     snEl.innerHTML = nsnEl.innerHTML =
       '<div class="empty-msg">No other students yet.</div>';
@@ -592,6 +592,23 @@ function saveStudentModal() {
     };
     if (editCtx.id) {
       studentUpdate(editCtx.id, data);
+      // Sync bidirectional constraints: update all other students' lists to mirror
+      // this student's sit-near and do-not-sit-near selections.
+      state.students.forEach(other => {
+        if (other.id === editCtx.id) return;
+        // sitNear
+        if (sitNear.includes(other.id)) {
+          if (!other.sitNear.includes(editCtx.id)) other.sitNear.push(editCtx.id);
+        } else {
+          other.sitNear = other.sitNear.filter(x => x !== editCtx.id);
+        }
+        // doNotSitNear
+        if (doNotSitNear.includes(other.id)) {
+          if (!other.doNotSitNear.includes(editCtx.id)) other.doNotSitNear.push(editCtx.id);
+        } else {
+          other.doNotSitNear = other.doNotSitNear.filter(x => x !== editCtx.id);
+        }
+      });
     } else {
       studentCreate(data);
     }
