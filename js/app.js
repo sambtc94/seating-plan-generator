@@ -20,7 +20,8 @@ const SEAT_LABELS = {
   teacher:    { icon: '👨‍🏫', name: "Teacher's Desk" },
   whiteboard: { icon: '📋',  name: 'Whiteboard'      },
   bookshelf:  { icon: '📚',  name: 'Bookshelf'       },
-  projector:  { icon: '📽',  name: 'Projector'       }
+  projector:  { icon: '📽',  name: 'Projector'       },
+  computer:   { icon: '💻',  name: 'Computer Desk'   }
 };
 
 const CELL_SIZE              = 84;  // 78px seat + 6px gap — used for grid↔freeform conversion
@@ -143,6 +144,15 @@ function currentRoom() {
   return state.rooms.find(r => r.id === state.currentRoomId) ?? null;
 }
 
+/**
+ * Snap a pixel coordinate to the nearest multiple of `gridSize`.
+ * If `gridSize` is 0 or falsy, returns the value unchanged.
+ */
+function snapCoord(value, gridSize) {
+  if (!gridSize) return value;
+  return Math.round(value / gridSize) * gridSize;
+}
+
 function studentById(id) {
   return state.students.find(s => s.id === id) ?? null;
 }
@@ -182,7 +192,8 @@ function roomCreate(name = 'New Room', rows = 5, cols = 6) {
     layoutMode:     'grid',   // 'grid' | 'freeform'
     frontDirection: 'top',    // 'top' | 'right' | 'bottom' | 'left'
     canvasW: 900,
-    canvasH: 700
+    canvasH: 700,
+    snapGrid: 0               // 0 = off; positive integer = snap size in px (freeform only)
   };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -562,6 +573,43 @@ function assignStudents(method) {
       });
       const remainingStudents = students.slice(idx);
 
+      // ── Enforce sitNear constraints across ability levels ───
+      // If two students who must sit near each other would be placed in
+      // different ability-level groups, move the partner into the same
+      // group as the student who references them (taking priority over
+      // pure ability-rank ordering).  Repeat until stable.
+      let changed = true;
+      // +2 gives two extra passes to resolve chains of constraints without
+      // risking an infinite loop on pathological data.
+      let passLimit = levels.length + 2;
+      while (changed && passLimit-- > 0) {
+        changed = false;
+        for (const lvl of levels) {
+          // Shallow copy to avoid modifying the list while we splice into it
+          for (const student of [...studentsByLevel[lvl]]) {
+            for (const nearId of (student.sitNear || [])) {
+              const nearStudent = studentById(nearId);
+              if (!nearStudent) continue;
+              // Find which levelled group nearStudent is currently in.
+              // If not found in any level (!nearLevel) they are in the
+              // remaining/unlabelled pool — leave them there.
+              const nearLevel = levels.find(l => studentsByLevel[l].includes(nearStudent));
+              if (!nearLevel || nearLevel === lvl) continue; // already together, or unlevelled
+              // Move nearStudent to this level, right after 'student'
+              studentsByLevel[nearLevel].splice(studentsByLevel[nearLevel].indexOf(nearStudent), 1);
+              const afterIdx = studentsByLevel[lvl].indexOf(student);
+              studentsByLevel[lvl].splice(afterIdx + 1, 0, nearStudent);
+              // If this level now has more students than seats, overflow
+              // the last student (lowest marks in the group) to remaining
+              while (studentsByLevel[lvl].length > seatsByLevel[lvl].length) {
+                remainingStudents.push(studentsByLevel[lvl].pop());
+              }
+              changed = true;
+            }
+          }
+        }
+      }
+
       // Helper: greedy placement of a student list into a seat pool
       const greedyPlace = (studentList, seatPool) => {
         for (const student of studentList) {
@@ -572,11 +620,13 @@ function assignStudents(method) {
             let score = Math.random() * 0.02;
             (student.sitNear || []).forEach(nearId => {
               const ns = seats.find(s => s.studentId === nearId);
-              if (ns) score += 10 / (1 + seatDist(seat, ns));
+              // High weight (500) ensures keep-together takes priority over ability grouping
+              if (ns) score += 500 / (1 + seatDist(seat, ns));
             });
             (student.doNotSitNear || []).forEach(awayId => {
               const ns = seats.find(s => s.studentId === awayId);
-              if (ns) score -= 15 / (1 + seatDist(seat, ns));
+              // High weight (1000) ensures keep-apart takes priority over all other factors
+              if (ns) score -= 1000 / (1 + seatDist(seat, ns));
             });
             if (score > bestScore) { bestScore = score; best = seat; }
           }
@@ -629,12 +679,14 @@ function assignStudents(method) {
 
       (student.sitNear || []).forEach(nearId => {
         const ns = pool.find(s => s.studentId === nearId);
-        if (ns) score += 10 / (1 + seatDist(seat, ns));
+        // High weight (500) ensures keep-together constraints take priority over other factors
+        if (ns) score += 500 / (1 + seatDist(seat, ns));
       });
 
       (student.doNotSitNear || []).forEach(awayId => {
         const ns = pool.find(s => s.studentId === awayId);
-        if (ns) score -= 15 / (1 + seatDist(seat, ns));
+        // High weight (1000) ensures keep-apart constraints take priority over all other factors
+        if (ns) score -= 1000 / (1 + seatDist(seat, ns));
       });
 
       if (score > bestScore) { bestScore = score; best = seat; }
@@ -768,7 +820,8 @@ function normaliseRoom(room) {
     frontDirection:    'top',
     canvasW:           900,
     canvasH:           700,
-    assignmentHistory: []
+    assignmentHistory: [],
+    snapGrid:          0    // 0 = off; positive integer = snap size in px
   }, room);
 }
 
@@ -1300,6 +1353,14 @@ function showSeatContextMenu(clientX, clientY, seat, room) {
   ctxMenuRoomId = room.id;
   const menu = document.getElementById('seat-ctx-menu');
   if (!menu) return;
+
+  // Show "Clear student" option only when a student is currently seated here
+  const hasStu = !!(seat.studentId && !seat.label);
+  const clearBtn = document.getElementById('seat-ctx-clear-btn');
+  const divider  = menu.querySelector('.seat-ctx-divider');
+  if (clearBtn) clearBtn.style.display = hasStu ? '' : 'none';
+  if (divider)  divider.style.display  = hasStu ? '' : 'none';
+
   menu.style.left    = clientX + 'px';
   menu.style.top     = clientY + 'px';
   menu.style.display = 'block';
@@ -1583,6 +1644,7 @@ function updateRoomControls(room) {
   if (room && isFreeform) {
     document.getElementById('canvas-w-input').value = room.canvasW ?? 900;
     document.getElementById('canvas-h-input').value = room.canvasH ?? 700;
+    document.getElementById('snap-grid-input').value = room.snapGrid ?? 0;
   }
 
   // Layout toggle button
@@ -1795,8 +1857,10 @@ function renderFreeformGrid(room, grid) {
         return;
       }
       const rect = grid.getBoundingClientRect();
-      const x = Math.round(Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF)));
-      const y = Math.round(Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, e.clientY - rect.top  - SEAT_HALF)));
+      const rawX = Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF));
+      const rawY = Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, e.clientY - rect.top  - SEAT_HALF));
+      const x = snapCoord(Math.round(rawX), room.snapGrid || 0);
+      const y = snapCoord(Math.round(rawY), room.snapGrid || 0);
       // Prevent stacking: if a seat already occupies the same area, ignore this event.
       // (DOM replacement via cloneNode can cause browsers to re-fire pointerdown on the
       // new element while the pointer is still physically held down, producing duplicates.)
@@ -1829,8 +1893,10 @@ function attachFreeformDrag(cell, seat, room) {
       const dy = ev.clientY - startClientY;
       if (!moved && Math.hypot(dx, dy) < 4) return;
       moved = true;
-      seat.x = Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, origX + dx));
-      seat.y = Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, origY + dy));
+      const rawX = Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, origX + dx));
+      const rawY = Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, origY + dy));
+      seat.x = snapCoord(rawX, room.snapGrid || 0);
+      seat.y = snapCoord(rawY, room.snapGrid || 0);
       cell.style.left = seat.x + 'px';
       cell.style.top  = seat.y + 'px';
     };
@@ -1841,6 +1907,7 @@ function attachFreeformDrag(cell, seat, room) {
       cell.classList.remove('dragging');
       if (moved) {
         pushHistory();
+        // seat.x/y are already snapped (applied in onMove); just round to whole pixels
         seat.x = Math.round(seat.x);
         seat.y = Math.round(seat.y);
         scheduleAutosave();
@@ -2561,6 +2628,19 @@ function initEvents() {
     scheduleAutosave();
   });
 
+  // ── Snap-grid (freeform mode) ─────────────────────────────
+  document.getElementById('snap-grid-btn').addEventListener('click', () => {
+    const room = currentRoom();
+    if (!room) return;
+    const snap = parseInt(document.getElementById('snap-grid-input').value, 10);
+    if (isNaN(snap) || snap < 0 || snap > 200) {
+      alert('Snap size must be 0 (off) to 200 pixels.'); return;
+    }
+    room.snapGrid = snap;
+    scheduleAutosave();
+    showInfoBar(snap ? `Snap to ${snap}px grid enabled` : 'Snap to grid disabled');
+  });
+
   // ── Mode buttons ─────────────────────────────────────────
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => setMode(btn.dataset.mode));
@@ -2764,6 +2844,20 @@ function initEvents() {
       }
       hideSeatContextMenu();
     });
+  });
+
+  // ── Clear-student button in seat context menu ────────────
+  document.getElementById('seat-ctx-clear-btn').addEventListener('click', () => {
+    const room = state.rooms.find(r => r.id === ctxMenuRoomId);
+    const seat = room?.seats.find(s => s.id === ctxMenuSeatId);
+    if (seat && seat.studentId) {
+      pushHistory();
+      seat.studentId = null;
+      renderGrid();
+      renderStudentList();
+      scheduleAutosave();
+    }
+    hideSeatContextMenu();
   });
 
   // Hide seat context menu on any outside click
