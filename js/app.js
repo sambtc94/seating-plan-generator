@@ -1139,6 +1139,19 @@ function importStudents(arr) {
  * Supports RFC 4180-style quoted fields (commas inside quotes are preserved).
  * Extra columns are ignored.
  */
+/**
+ * Normalise a gender string from CSV to one of the canonical values
+ * ('male', 'female', 'other') accepted by the rest of the app.
+ * Returns '' for blank or unrecognised values.
+ */
+function normaliseGender(raw) {
+  const v = (raw || '').trim().toLowerCase();
+  if (v === 'male'   || v === 'm' || v === 'boy'  || v === 'man')  return 'male';
+  if (v === 'female' || v === 'f' || v === 'girl' || v === 'woman') return 'female';
+  if (v === 'other'  || v === 'o' || v === 'x')                     return 'other';
+  return '';
+}
+
 function importStudentsCSV(csvText) {
   const rows = parseCSVRows(csvText);
   if (rows.length < 2) throw new Error('CSV must have a header row and at least one data row.');
@@ -1160,7 +1173,7 @@ function importStudentsCSV(csvText) {
     const marksRaw = iMarks !== -1 ? parseFloat(cells[iMarks]) : NaN;
     studentCreate({
       name,
-      gender: iGender !== -1 ? (cells[iGender] || '') : '',
+      gender: iGender !== -1 ? normaliseGender(cells[iGender]) : '',
       marks:  !isNaN(marksRaw) ? marksRaw : null
     });
     imported++;
@@ -1223,7 +1236,7 @@ function parseCSVRows(csvText) {
    CSV TEMPLATE DOWNLOAD
 ============================================================ */
 function downloadCSVTemplate() {
-  const csvContent = 'name,gender,marks\nAlice,F,85\nBob,M,72\n';
+  const csvContent = 'name,gender,marks\nAlice,female,85\nBob,male,72\n';
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -3289,11 +3302,32 @@ function initEvents() {
 }
 
 /* ============================================================
+   MOBILE NAVIGATION
+============================================================ */
+function initMobileNav() {
+  const appBody = document.querySelector('.app-body');
+  const tabs = document.querySelectorAll('.mobile-tab');
+
+  // Set default active panel
+  appBody.dataset.activePanel = 'room';
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const panel = tab.dataset.panel;
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      appBody.dataset.activePanel = panel;
+    });
+  });
+}
+
+/* ============================================================
    INITIALISATION
 ============================================================ */
 function init() {
   applyDarkModePreference();
   initEvents();
+  initMobileNav();
   updateUndoRedoBtns();
 
   // Try to restore from localStorage; fall back to a default room
