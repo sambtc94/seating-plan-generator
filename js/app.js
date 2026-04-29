@@ -28,6 +28,7 @@ const FREEFORM_PAD           = 40;  // padding inside the freeform canvas
 const SEAT_WIDTH             = 78;  // seat cell width/height in px
 const SEAT_HALF              = 39;  // half of SEAT_WIDTH (for centring click position)
 const FREEFORM_ADJACENCY_PX  = 170; // pixel proximity for cluster auto-detect in freeform mode
+const MAX_FREEFORM_SEATS     = 200; // hard cap on desks in a freeform room
 
 /* ============================================================
    STATE
@@ -1428,8 +1429,11 @@ function buildStudentCard(student, isSeated) {
    RENDER — GRID (dispatcher)
 ============================================================ */
 function renderGrid() {
-  const grid = document.getElementById('room-grid');
-  grid.innerHTML = '';
+  // Replace the element with a fresh clone to remove any accumulated event listeners
+  // (e.g. pointerdown / contextmenu added by renderFreeformGrid on every render).
+  const oldGrid = document.getElementById('room-grid');
+  const grid = oldGrid.cloneNode(false);
+  oldGrid.parentNode.replaceChild(grid, oldGrid);
   grid.className = 'room-grid'; // reset any added classes
 
   const room = currentRoom();
@@ -1699,9 +1703,20 @@ function renderFreeformGrid(room, grid) {
       if (e.target !== grid) return;
       if (e.button !== 0) return; // left button only — ignore right-click
       e.preventDefault();
+      if (room.seats.length >= MAX_FREEFORM_SEATS) {
+        showInfoBar(`Maximum of ${MAX_FREEFORM_SEATS} desks reached — delete some desks first.`);
+        return;
+      }
       const rect = grid.getBoundingClientRect();
       const x = Math.round(Math.max(0, Math.min(room.canvasW - SEAT_WIDTH, e.clientX - rect.left - SEAT_HALF)));
       const y = Math.round(Math.max(0, Math.min(room.canvasH - SEAT_WIDTH, e.clientY - rect.top  - SEAT_HALF)));
+      // Prevent stacking: if a seat already occupies the same area, ignore this event.
+      // (DOM replacement via cloneNode can cause browsers to re-fire pointerdown on the
+      // new element while the pointer is still physically held down, producing duplicates.)
+      const tooClose = room.seats.some(s =>
+        Math.abs((s.x ?? 0) - x) < SEAT_HALF && Math.abs((s.y ?? 0) - y) < SEAT_HALF
+      );
+      if (tooClose) return;
       room.seats.push(makeFreeformSeat(room.id, x, y));
       scheduleAutosave();
       renderGrid();
@@ -2125,6 +2140,9 @@ function saveStudentModal() {
 
   const marksRaw = document.getElementById('s-marks').value;
   const marks    = marksRaw !== '' ? parseFloat(marksRaw) : null;
+  if (marks !== null && (isNaN(marks) || marks < 0 || marks > 100)) {
+    alert('Marks must be a number between 0 and 100.'); return;
+  }
 
   const sitNear = [...document.querySelectorAll('#sit-near-list input[name="sit-near"]:checked')]
     .map(cb => cb.value);
