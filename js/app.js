@@ -562,6 +562,43 @@ function assignStudents(method) {
       });
       const remainingStudents = students.slice(idx);
 
+      // ── Enforce sitNear constraints across ability levels ───
+      // If two students who must sit near each other would be placed in
+      // different ability-level groups, move the partner into the same
+      // group as the student who references them (taking priority over
+      // pure ability-rank ordering).  Repeat until stable.
+      let changed = true;
+      // +2 gives two extra passes to resolve chains of constraints without
+      // risking an infinite loop on pathological data.
+      let passLimit = levels.length + 2;
+      while (changed && passLimit-- > 0) {
+        changed = false;
+        for (const lvl of levels) {
+          // Shallow copy to avoid modifying the list while we splice into it
+          for (const student of [...studentsByLevel[lvl]]) {
+            for (const nearId of (student.sitNear || [])) {
+              const nearStudent = studentById(nearId);
+              if (!nearStudent) continue;
+              // Find which levelled group nearStudent is currently in.
+              // If not found in any level (!nearLevel) they are in the
+              // remaining/unlabelled pool — leave them there.
+              const nearLevel = levels.find(l => studentsByLevel[l].includes(nearStudent));
+              if (!nearLevel || nearLevel === lvl) continue; // already together, or unlevelled
+              // Move nearStudent to this level, right after 'student'
+              studentsByLevel[nearLevel].splice(studentsByLevel[nearLevel].indexOf(nearStudent), 1);
+              const afterIdx = studentsByLevel[lvl].indexOf(student);
+              studentsByLevel[lvl].splice(afterIdx + 1, 0, nearStudent);
+              // If this level now has more students than seats, overflow
+              // the last student (lowest marks in the group) to remaining
+              while (studentsByLevel[lvl].length > seatsByLevel[lvl].length) {
+                remainingStudents.push(studentsByLevel[lvl].pop());
+              }
+              changed = true;
+            }
+          }
+        }
+      }
+
       // Helper: greedy placement of a student list into a seat pool
       const greedyPlace = (studentList, seatPool) => {
         for (const student of studentList) {
@@ -572,11 +609,11 @@ function assignStudents(method) {
             let score = Math.random() * 0.02;
             (student.sitNear || []).forEach(nearId => {
               const ns = seats.find(s => s.studentId === nearId);
-              if (ns) score += 10 / (1 + seatDist(seat, ns));
+              if (ns) score += 500 / (1 + seatDist(seat, ns));
             });
             (student.doNotSitNear || []).forEach(awayId => {
               const ns = seats.find(s => s.studentId === awayId);
-              if (ns) score -= 15 / (1 + seatDist(seat, ns));
+              if (ns) score -= 1000 / (1 + seatDist(seat, ns));
             });
             if (score > bestScore) { bestScore = score; best = seat; }
           }
@@ -629,12 +666,12 @@ function assignStudents(method) {
 
       (student.sitNear || []).forEach(nearId => {
         const ns = pool.find(s => s.studentId === nearId);
-        if (ns) score += 10 / (1 + seatDist(seat, ns));
+        if (ns) score += 500 / (1 + seatDist(seat, ns));
       });
 
       (student.doNotSitNear || []).forEach(awayId => {
         const ns = pool.find(s => s.studentId === awayId);
-        if (ns) score -= 15 / (1 + seatDist(seat, ns));
+        if (ns) score -= 1000 / (1 + seatDist(seat, ns));
       });
 
       if (score > bestScore) { bestScore = score; best = seat; }
@@ -1300,6 +1337,14 @@ function showSeatContextMenu(clientX, clientY, seat, room) {
   ctxMenuRoomId = room.id;
   const menu = document.getElementById('seat-ctx-menu');
   if (!menu) return;
+
+  // Show "Clear student" option only when a student is currently seated here
+  const hasStu = !!(seat.studentId && !seat.label);
+  const clearBtn = document.getElementById('seat-ctx-clear-btn');
+  const divider  = menu.querySelector('.seat-ctx-divider');
+  if (clearBtn) clearBtn.style.display = hasStu ? '' : 'none';
+  if (divider)  divider.style.display  = hasStu ? '' : 'none';
+
   menu.style.left    = clientX + 'px';
   menu.style.top     = clientY + 'px';
   menu.style.display = 'block';
@@ -2764,6 +2809,20 @@ function initEvents() {
       }
       hideSeatContextMenu();
     });
+  });
+
+  // ── Clear-student button in seat context menu ────────────
+  document.getElementById('seat-ctx-clear-btn').addEventListener('click', () => {
+    const room = state.rooms.find(r => r.id === ctxMenuRoomId);
+    const seat = room?.seats.find(s => s.id === ctxMenuSeatId);
+    if (seat && seat.studentId) {
+      pushHistory();
+      seat.studentId = null;
+      renderGrid();
+      renderStudentList();
+      scheduleAutosave();
+    }
+    hideSeatContextMenu();
   });
 
   // Hide seat context menu on any outside click
