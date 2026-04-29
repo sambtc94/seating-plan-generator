@@ -16,6 +16,7 @@
   --header-h:  52px;
   --tabs-h:    40px;
   --toolbar-h: 48px;
+  --footer-h:  28px;
 }
 
 html, body {
@@ -130,7 +131,7 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 ============================================================ */
 .app-body {
   display: flex;
-  height: calc(100vh - var(--header-h) - var(--tabs-h) - var(--toolbar-h));
+  height: calc(100vh - var(--header-h) - var(--tabs-h) - var(--toolbar-h) - var(--footer-h));
   overflow: hidden;
 }
 
@@ -532,7 +533,7 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 
   /* Account for mobile nav bar in app body height */
   .app-body {
-    height: calc(100vh - var(--header-h) - var(--tabs-h) - var(--toolbar-h) - var(--mobile-nav-h));
+    height: calc(100vh - var(--header-h) - var(--tabs-h) - var(--toolbar-h) - var(--footer-h) - var(--mobile-nav-h));
   }
 
   /* All panels fill the full width */
@@ -701,6 +702,7 @@ body.dark-mode .mobile-tab-bar { background: #0f1319; border-top-color: rgba(255
   .room-config,
   .seat-info-bar,
   .mobile-tab-bar,
+  .app-footer,
   .autosave-badge { display: none !important; }
 
   /* Let the page scroll fully */
@@ -724,6 +726,8 @@ body.dark-mode .mobile-tab-bar { background: #0f1319; border-top-color: rgba(255
     overflow: visible !important;
     display: block !important;
   }
+
+  footer.app-footer { display: none !important; }
 
   .panel-centre {
     width: 100% !important;
@@ -1012,3 +1016,90 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
   outline-offset: -2px;
 }
 
+/* ============================================================
+   FOOTER
+============================================================ */
+.app-footer {
+  height: var(--footer-h);
+  background: #1e272e;
+  color: #636e72;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  font-size: 11px;
+  flex-shrink: 0;
+  z-index: 10; position: relative;
+}
+.version-badge {
+  font-size: 10px;
+  color: #4a5568;
+  font-family: monospace;
+}
+body.dark-mode .app-footer { background: #0f1319; }
+body.dark-mode .version-badge { color: #4a5568; }
+
+/* ============================================================
+   HELP MODAL
+============================================================ */
+.modal-help { max-width: 780px; }
+
+.help-toc {
+  display: flex; flex-wrap: wrap; gap: 6px 10px;
+  padding: 10px 14px; margin-bottom: 16px;
+  background: var(--bg); border-radius: 8px;
+  font-size: 12px; border: 1px solid var(--border);
+  align-items: center;
+}
+.help-toc strong { color: var(--text-muted); margin-right: 4px; }
+.help-toc a {
+  color: var(--primary); text-decoration: none;
+  padding: 2px 6px; border-radius: 4px;
+  transition: background .12s;
+}
+.help-toc a:hover { background: rgba(9,132,227,.1); text-decoration: underline; }
+
+.help-section {
+  margin-bottom: 22px; padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.help-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+.help-section h4 {
+  font-size: 14px; font-weight: 700; margin-bottom: 10px;
+  color: var(--text);
+}
+.help-section h5 {
+  font-size: 12px; font-weight: 600; margin: 10px 0 6px;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px;
+}
+
+.help-section p {
+  font-size: 13px; line-height: 1.6; margin-bottom: 8px;
+  color: var(--text);
+}
+
+.help-section ul {
+  padding-left: 18px; margin-bottom: 6px;
+}
+.help-section ul li {
+  font-size: 13px; line-height: 1.65; margin-bottom: 4px; color: var(--text);
+}
+.help-section em { color: var(--text-muted); }
+
+.help-table {
+  border-collapse: collapse; width: 100%; font-size: 13px;
+}
+.help-table tr { border-bottom: 1px solid var(--border); }
+.help-table tr:last-child { border-bottom: none; }
+.help-table td { padding: 5px 10px; vertical-align: top; }
+.help-table td:first-child { white-space: nowrap; color: var(--text-muted); }
+
+kbd {
+  display: inline-block; padding: 1px 5px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; font-family: monospace; font-size: 11px;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+body.dark-mode .help-toc { background: var(--bg); border-color: var(--border); }
+body.dark-mode .help-section { border-color: var(--border); }
+body.dark-mode kbd { background: var(--surface); border-color: var(--border); }

@@ -16,6 +16,7 @@
     <span class="autosave-badge" id="autosave-badge"></span>
   </div>
   <div class="header-right">
+    <button class="btn btn-secondary btn-sm" id="help-btn" title="Open Help Guide">❓ Help</button>
     <button class="btn btn-secondary btn-sm" id="dark-mode-btn" title="Toggle dark mode">🌙 Dark</button>
     <button class="btn btn-secondary btn-sm" id="export-csv-btn" title="Export current seating as CSV">📊 CSV</button>
     <button class="btn btn-secondary" id="print-btn">🖨 Print</button>
@@ -28,8 +29,8 @@
 <!-- ── ROOM TABS ────────────────────────────────────────── -->
 <div class="room-bar">
   <div class="room-tabs" id="room-tabs"></div>
-  <button class="btn btn-primary btn-sm" id="add-room-btn">＋ New Room</button>
-  <button class="btn btn-secondary btn-sm" id="toggle-archived-btn" title="Show / hide archived rooms">📦 Archived</button>
+  <button class="btn btn-primary btn-sm" id="add-room-btn">＋ New Class</button>
+  <button class="btn btn-secondary btn-sm" id="toggle-archived-btn" title="Show / hide archived classes">📦 Archived</button>
 </div>
 
 <!-- ── TOOLBAR ──────────────────────────────────────────── -->
@@ -39,7 +40,7 @@
     <button class="btn mode-btn active" data-mode="move"    id="mode-move">↕ Move</button>
     <button class="btn mode-btn"        data-mode="toggle"  id="mode-toggle">⬜ Edit Seats</button>
     <button class="btn mode-btn"        data-mode="cluster" id="mode-cluster">🔲 Edit Clusters</button>
-    <button class="btn mode-btn"        data-mode="layout"  id="mode-layout" style="display:none">⊞ Edit Layout</button>
+    <button class="btn mode-btn"        data-mode="layout"  id="mode-layout">⊞ Edit Layout</button>
   </div>
   <div class="toolbar-group">
     <span class="toolbar-label">Assign:</span>
@@ -103,14 +104,14 @@
         <span class="capacity-badge" id="capacity-badge"></span>
       </div>
     <div class="room-config">
-        <!-- Grid size — hidden in freeform mode -->
-        <div id="grid-size-group" class="room-config-group">
+        <!-- Grid size — hidden (all rooms are freeform) -->
+        <div id="grid-size-group" class="room-config-group" style="display:none">
           <label>Rows:<input type="number" id="rows-input" value="5" min="1" max="30" /></label>
           <label>Cols:<input type="number" id="cols-input" value="6" min="1" max="30" /></label>
           <button class="btn btn-secondary btn-sm" id="resize-btn">↔ Resize</button>
         </div>
-        <!-- Canvas size — shown only in freeform mode -->
-        <div id="canvas-size-group" class="room-config-group" style="display:none">
+        <!-- Canvas size — always shown (freeform only) -->
+        <div id="canvas-size-group" class="room-config-group">
           <label>W:<input type="number" id="canvas-w-input" value="900" min="300" max="3000" step="50" /></label>
           <label>H:<input type="number" id="canvas-h-input" value="700" min="200" max="2000" step="50" /></label>
           <button class="btn btn-secondary btn-sm" id="resize-canvas-btn">↔ Resize Canvas</button>
@@ -124,7 +125,7 @@
         <button class="btn btn-sm dir-btn"         data-dir="right"  title="Front of class at right" >→</button>
         <button class="btn btn-sm dir-btn"         data-dir="bottom" title="Front of class at bottom">↓</button>
         <button class="btn btn-sm dir-btn"         data-dir="left"   title="Front of class at left"  >←</button>
-        <button class="btn btn-secondary btn-sm" id="layout-toggle-btn">⊞ Freeform</button>
+        <button class="btn btn-secondary btn-sm" id="layout-toggle-btn" style="display:none">⊞ Freeform</button>
         <button class="btn btn-secondary  btn-sm" id="duplicate-room-btn">⧉ Duplicate</button>
         <button class="btn btn-secondary  btn-sm" id="save-template-btn" title="Save this room layout as a reusable template">💾 Template</button>
         <button class="btn btn-secondary  btn-sm" id="apply-template-btn" title="Apply a saved layout template to this room">📐 Apply</button>
@@ -178,13 +179,13 @@
   <!-- ROOM MODAL -->
   <div class="modal" id="room-modal">
     <div class="modal-header">
-      <h3 id="room-modal-title">New Room</h3>
+      <h3 id="room-modal-title">New Class</h3>
       <button class="modal-close" data-close="room-modal">✕</button>
     </div>
     <div class="modal-body">
       <div class="form-group">
-        <label for="room-name-input">Room name</label>
-        <input type="text" id="room-name-input" placeholder="e.g. Classroom A" />
+        <label for="room-name-input">Class name</label>
+        <input type="text" id="room-name-input" placeholder="e.g. Year 10 Maths" />
       </div>
     </div>
     <div class="modal-footer">
@@ -357,6 +358,18 @@
     </div>
   </div>
 
+  <!-- HELP MODAL -->
+  <div class="modal modal-wide modal-help" id="help-modal">
+    <div class="modal-header">
+      <h3>❓ Help Guide</h3>
+      <button class="modal-close" data-close="help-modal">✕</button>
+    </div>
+    <div class="modal-body" id="help-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="help-modal">Close</button>
+    </div>
+  </div>
+
 </div><!-- /#modal-overlay -->
 
 <!-- ── MOBILE NAVIGATION ──────────────────────────────── -->
@@ -374,6 +387,12 @@
     <span class="tab-label">Clusters</span>
   </button>
 </nav>
+
+<!-- ── FOOTER ─────────────────────────────────────────────── -->
+<footer class="app-footer">
+  <span>Seating Plan Generator</span>
+  <span id="app-version" class="version-badge"></span>
+</footer>
 
 <script src="js/app.js"></script>
 </body>

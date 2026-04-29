@@ -1,6 +1,12 @@
 'use strict';
 
 /* ============================================================
+   VERSION
+============================================================ */
+const APP_COMMIT = 'a45c662';
+const APP_VERSION = '1.0 (' + APP_COMMIT + ')';
+
+/* ============================================================
    CONSTANTS
 ============================================================ */
 const CLUSTER_COLOURS = [
@@ -191,23 +197,26 @@ function avatarColour(gender) {
  * @param {number} cols
  * @returns {Room}
  */
-function roomCreate(name = 'New Room', rows = 5, cols = 6) {
+function roomCreate(name = 'New Class', rows = 5, cols = 6) {
   const id = uid();
   const room = {
     id, name, rows, cols,
     seats: [], clusters: [],
     archived:       false,
-    layoutMode:     'grid',   // 'grid' | 'freeform'
-    frontDirection: 'top',    // 'top' | 'right' | 'bottom' | 'left'
+    layoutMode:     'freeform', // all rooms are freeform
+    frontDirection: 'top',      // 'top' | 'right' | 'bottom' | 'left'
     canvasW: 900,
     canvasH: 700,
-    snapGrid: 0               // 0 = off; positive integer = snap size in px (freeform only)
+    snapGrid: 0,                // 0 = off; positive integer = snap size in px (freeform only)
+    classSetId:     null        // class set selected for this room
   };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       room.seats.push(makeSeat(id, r, c));
     }
   }
+  // Place seats at grid positions in freeform canvas
+  roomSwitchToFreeform(room);
   state.rooms.push(room);
   return room;
 }
@@ -979,7 +988,7 @@ function applyStateData(data) {
 
 /** Ensure a room object has all expected fields (backwards-compat). */
 function normaliseRoom(room) {
-  return Object.assign({
+  const r = Object.assign({
     archived:           false,
     clusters:           [],
     seats:              [],
@@ -989,8 +998,12 @@ function normaliseRoom(room) {
     canvasH:            700,
     assignmentHistory:  [],
     snapGrid:           0,    // 0 = off; positive integer = snap size in px
-    prevNeighbourPairs: []    // serialised Set of "id1:id2" strings from last assignment
+    prevNeighbourPairs: [],   // serialised Set of "id1:id2" strings from last assignment
+    classSetId:         null  // remembered class set for this room
   }, room);
+  // Migrate any legacy grid-layout rooms to freeform
+  if (r.layoutMode === 'grid') roomSwitchToFreeform(r);
+  return r;
 }
 
 function saveJSON() {
@@ -1428,8 +1441,162 @@ function restoreAssignment(room, snapshot) {
 }
 
 /* ============================================================
-   DARK MODE
+   HELP GUIDE
 ============================================================ */
+function openHelpModal() {
+  const body = document.getElementById('help-body');
+  if (!body) return;
+  body.innerHTML = `
+<div class="help-toc">
+  <strong>Contents:</strong>
+  <a href="#h-overview">Overview</a>
+  <a href="#h-classes">Managing Classes</a>
+  <a href="#h-students">Managing Students</a>
+  <a href="#h-classsets">Class Sets</a>
+  <a href="#h-layout">Seating Layout</a>
+  <a href="#h-assign">Assigning Students</a>
+  <a href="#h-clusters">Clusters / Groups</a>
+  <a href="#h-save">Saving &amp; Loading</a>
+  <a href="#h-shortcuts">Keyboard Shortcuts</a>
+</div>
+
+<section id="h-overview" class="help-section">
+  <h4>🎓 Overview</h4>
+  <p>Seating Plan Generator lets you create and manage flexible seating plans for your classes.
+  Each <em>class</em> has its own freeform canvas where you can place desks, assign students, and organise groups.</p>
+  <ul>
+    <li><strong>Left panel</strong> — student roster, filtered by class set</li>
+    <li><strong>Centre panel</strong> — the seating plan canvas for the current class</li>
+    <li><strong>Right panel</strong> — clusters / groups for the current class</li>
+  </ul>
+</section>
+
+<section id="h-classes" class="help-section">
+  <h4>🏫 Managing Classes</h4>
+  <ul>
+    <li><strong>＋ New Class</strong> — creates a new class with a blank freeform canvas.</li>
+    <li><strong>✏ (pencil icon on tab)</strong> — rename the class.</li>
+    <li><strong>⧉ Duplicate</strong> — copies the current class layout (without student assignments).</li>
+    <li><strong>📦 Archive</strong> — hides the class from the tab bar. Click <em>📦 Archived</em> to toggle visibility of archived classes.</li>
+    <li><strong>🗑 Delete Class</strong> — permanently deletes the class and its layout.</li>
+    <li><strong>💾 Template / 📐 Apply</strong> — save the current layout as a reusable template, then apply it to another class.</li>
+  </ul>
+  <p>Each class remembers which <em>Class Set</em> was last active, so switching tabs restores your student filter automatically.</p>
+</section>
+
+<section id="h-students" class="help-section">
+  <h4>👥 Managing Students</h4>
+  <ul>
+    <li><strong>＋ Add</strong> — open the student form to add a new student.</li>
+    <li><strong>📥 CSV</strong> — import students from a CSV file. Required column: <em>name</em>. Optional: <em>gender</em>, <em>marks</em>.</li>
+    <li><strong>📤 Export</strong> — download the student list as a CSV file.</li>
+    <li><strong>✏️ (edit icon)</strong> — edit a student's details, flags, photo, and seating constraints.</li>
+    <li><strong>🏠 / ✅ (absent toggle)</strong> — mark a student absent; they will be skipped during assignment.</li>
+    <li><strong>🗑 (delete icon)</strong> — remove the student from all classes.</li>
+  </ul>
+  <h5>Student fields</h5>
+  <ul>
+    <li><strong>Gender</strong> — used by the "By Gender" assignment method to alternate male/female.</li>
+    <li><strong>Marks / Ability</strong> — used by the "By Ability" method to seat highest achievers in ability-levelled clusters.</li>
+    <li><strong>Preferred position</strong> — Front, Back, Left, or Right of class. The algorithm scores seats accordingly.</li>
+    <li><strong>Flags</strong> — SEN, EAL, Gifted, Behaviour, or custom flags shown as coloured pills on each desk.</li>
+    <li><strong>Sit near / Do not sit near</strong> — hard constraints respected during assignment scoring.</li>
+    <li><strong>Photo</strong> — optional portrait shown in the student card and desk tile.</li>
+  </ul>
+</section>
+
+<section id="h-classsets" class="help-section">
+  <h4>📋 Class Sets</h4>
+  <p>Class Sets let you define named subsets of students (e.g. "Year 10 Maths", "Period 3") so that each class tab shows only the relevant students.</p>
+  <ul>
+    <li>Click <strong>⚙️</strong> (gear icon) in the Students panel to open <em>Manage Class Sets</em>.</li>
+    <li>Create a class set, give it a name, and tick the students who belong to it.</li>
+    <li>Use the dropdown at the top of the Students panel to filter by a class set.</li>
+    <li>Each class (tab) remembers which class set was last selected — switching tabs restores your filter automatically.</li>
+    <li>Assignments only include students visible in the current filter.</li>
+  </ul>
+</section>
+
+<section id="h-layout" class="help-section">
+  <h4>🖊 Seating Layout</h4>
+  <p>All classes use a <strong>freeform</strong> canvas where desks can be placed anywhere.</p>
+  <ul>
+    <li>Switch to <strong>⊞ Edit Layout</strong> mode (toolbar or press <kbd>4</kbd>) to add, move, or delete desks.</li>
+    <li><strong>Click an empty area</strong> of the canvas to add a new desk.</li>
+    <li><strong>Drag a desk</strong> to reposition it. The snap grid helps alignment.</li>
+    <li><strong>Right-click a desk</strong> in Edit Layout mode to delete it.</li>
+    <li>Use the <strong>W / H</strong> inputs to resize the canvas.</li>
+    <li>Set the <strong>Snap</strong> value (pixels) to align desks to a grid; set to 0 to disable snapping.</li>
+    <li>The <strong>Front ↑→↓←</strong> buttons set which side of the canvas is the front of the class; this affects the "Preferred position" scoring during assignment.</li>
+    <li><strong>Right-click any desk</strong> (in Move mode) to label it as a Teacher's Desk, Whiteboard, Bookshelf, Projector, or Computer — labelled desks are excluded from student assignment.</li>
+    <li>Use <strong>📌 Pin</strong> (right-click menu) to pin a student to a specific desk; pinned students are not moved when re-assigning.</li>
+  </ul>
+</section>
+
+<section id="h-assign" class="help-section">
+  <h4>▶ Assigning Students</h4>
+  <ul>
+    <li><strong>▶ Assign</strong> — places all visible (non-absent) students into available desks using the chosen method.</li>
+    <li><strong>✕ Clear</strong> — removes all student assignments from the current class.</li>
+    <li><strong>🔄 Vary</strong> — when checked, the algorithm penalises placing the same neighbours together as last time, encouraging variety across assignments.</li>
+  </ul>
+  <h5>Assignment methods</h5>
+  <ul>
+    <li><strong>Random</strong> — shuffles students and places them randomly.</li>
+    <li><strong>By Ability (Marks)</strong> — sorts students by marks (highest first) and places them into ability-levelled clusters if configured; otherwise fills seats in order.</li>
+    <li><strong>By Gender</strong> — interleaves male and female students, appending others.</li>
+  </ul>
+  <p>All methods respect <em>Sit near</em>, <em>Do not sit near</em>, and <em>Preferred position</em> constraints via a greedy scoring algorithm.</p>
+  <ul>
+    <li><strong>↩ Undo / ↪ Redo</strong> — step back or forward through changes (up to 20 steps).</li>
+    <li><strong>📊 Stats</strong> — summary of seat usage, gender balance, and constraint satisfaction.</li>
+    <li><strong>🕐 History</strong> — view and restore previous assignment snapshots (up to 10 per class).</li>
+    <li><strong>🔍 Audit</strong> — highlights desks where a student's constraints are violated.</li>
+  </ul>
+</section>
+
+<section id="h-clusters" class="help-section">
+  <h4>🔲 Clusters / Groups</h4>
+  <p>Clusters are named groups of desks (e.g. "Table 1", "High Ability"). They are shown with a coloured border and can be used to direct the ability-based assignment.</p>
+  <ul>
+    <li><strong>＋ Add</strong> — create a cluster with a name, colour, and optional ability level.</li>
+    <li><strong>🔲 Edit Clusters</strong> mode — click desks to assign or remove them from the selected cluster.</li>
+    <li><strong>🔍 Auto-Detect</strong> — automatically groups adjacent desks into clusters.</li>
+    <li><strong>Ability level</strong> — set 1 = highest ability on a cluster. The "By Ability" assignment method fills level-1 clusters with the highest-marks students first.</li>
+  </ul>
+</section>
+
+<section id="h-save" class="help-section">
+  <h4>💾 Saving &amp; Loading</h4>
+  <ul>
+    <li>Your work is <strong>auto-saved</strong> to your browser's local storage after every change (indicated by the ✔ Saved badge).</li>
+    <li><strong>💾 Save JSON</strong> — download a full backup as a <code>.json</code> file.</li>
+    <li><strong>📂 Load JSON</strong> — restore from a previously saved <code>.json</code> file.</li>
+    <li><strong>📊 CSV</strong> — export the current seating plan (assigned students, rows/cols, clusters) as a spreadsheet.</li>
+    <li><strong>🖨 Print</strong> — opens the browser print dialog. The UI chrome is hidden; only the seating plan is printed. Use "Save as PDF" for a digital copy.</li>
+  </ul>
+</section>
+
+<section id="h-shortcuts" class="help-section">
+  <h4>⌨ Keyboard Shortcuts</h4>
+  <table class="help-table">
+    <tr><td><kbd>A</kbd></td><td>Assign students (uses current method)</td></tr>
+    <tr><td><kbd>C</kbd></td><td>Clear all assignments</td></tr>
+    <tr><td><kbd>1</kbd></td><td>Switch to Move mode</td></tr>
+    <tr><td><kbd>2</kbd></td><td>Switch to Edit Seats mode</td></tr>
+    <tr><td><kbd>3</kbd></td><td>Switch to Edit Clusters mode</td></tr>
+    <tr><td><kbd>4</kbd></td><td>Switch to Edit Layout mode</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Redo</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Close modal / menu</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Submit open modal form</td></tr>
+  </table>
+</section>
+`;
+  showModalEl('help-modal');
+}
+
+
 function toggleDarkMode() {
   const isDark = document.body.classList.toggle('dark-mode');
   localStorage.setItem('spg_dark_mode', isDark ? '1' : '0');
@@ -1579,7 +1746,7 @@ function renderTabs() {
     const editIcon = document.createElement('span');
     editIcon.className = 'tab-edit';
     editIcon.textContent = '✏';
-    editIcon.title = 'Rename room';
+    editIcon.title = 'Rename class';
     editIcon.addEventListener('click', e => { e.stopPropagation(); openModal('room', room.id); });
 
     btn.appendChild(nameSpan);
@@ -1598,7 +1765,6 @@ function renderTabs() {
 function renderClassSetBar() {
   const sel = document.getElementById('class-set-select');
   if (!sel) return;
-  const prev = sel.value;
   sel.innerHTML = '<option value="">All Students</option>';
   state.classSets.forEach(cs => {
     const opt = document.createElement('option');
@@ -1606,9 +1772,12 @@ function renderClassSetBar() {
     opt.textContent = `${cs.name} (${cs.studentIds.length})`;
     sel.appendChild(opt);
   });
-  // Restore selection
-  if (state.activeClassSetId && [...sel.options].some(o => o.value === state.activeClassSetId)) {
-    sel.value = state.activeClassSetId;
+  // Restore class set from the current room
+  const room = currentRoom();
+  const roomClassSetId = room?.classSetId ?? null;
+  if (roomClassSetId && [...sel.options].some(o => o.value === roomClassSetId)) {
+    sel.value = roomClassSetId;
+    state.activeClassSetId = roomClassSetId;
   } else {
     sel.value = '';
     state.activeClassSetId = null;
@@ -1627,7 +1796,7 @@ function renderStudentList() {
     : visible;
 
   if (!state.students.length) {
-    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 CSV" to import.</div>';
+    el.innerHTML = '<div class="empty-msg">No students yet.<br>Click "＋ Add" to add students,<br>or "📥 CSV" to import.<br><br>Tip: Use <strong>Class Sets</strong> (⚙️) to filter students per class.</div>';
     return;
   }
 
@@ -1765,8 +1934,8 @@ function renderGrid() {
 
   const room = currentRoom();
   if (!room) {
-    grid.innerHTML = '<div class="no-room-msg">No room selected.<br>Create a room using "＋ New Room".</div>';
-    document.getElementById('room-name-display').textContent = 'No room selected';
+    grid.innerHTML = '<div class="no-room-msg">No class selected.<br>Create a class using "＋ New Class".</div>';
+    document.getElementById('room-name-display').textContent = 'No class selected';
     updateRoomControls(null);
     updateFrontLabel(null);
     updateCapacityBadge(null);
@@ -1778,13 +1947,10 @@ function renderGrid() {
   updateFrontLabel(room);
   updateCapacityBadge(room);
 
-  if (room.layoutMode === 'freeform') {
-    renderFreeformGrid(room, grid);
-    if (state.mode === 'layout') {
-      showInfoBar('Click canvas to add desk  ·  Drag to move  ·  Right-click to delete');
-    }
-  } else {
-    renderRegularGrid(room, grid);
+  // All rooms are freeform after normaliseRoom migration
+  renderFreeformGrid(room, grid);
+  if (state.mode === 'layout') {
+    showInfoBar('Click canvas to add desk  ·  Drag to move  ·  Right-click to delete');
   }
 }
 
@@ -1801,41 +1967,28 @@ function updateFrontLabel(room) {
 
 /* ── Room header controls ────────────────────────────────── */
 function updateRoomControls(room) {
-  const isFreeform = room?.layoutMode === 'freeform';
-
   // Archive button label
   const archBtn = document.getElementById('archive-room-btn');
   if (archBtn) {
     archBtn.textContent = room?.archived ? '📤 Unarchive' : '📦 Archive';
-    archBtn.title       = room?.archived ? 'Restore this room' : 'Archive this room';
+    archBtn.title       = room?.archived ? 'Restore this class' : 'Archive this class';
   }
 
-  // Grid vs canvas size groups
+  // Always show canvas size group (all rooms are freeform)
   const gridGroup   = document.getElementById('grid-size-group');
   const canvasGroup = document.getElementById('canvas-size-group');
-  if (gridGroup)   gridGroup.style.display   = isFreeform ? 'none' : 'flex';
-  if (canvasGroup) canvasGroup.style.display = isFreeform ? 'flex' : 'none';
+  if (gridGroup)   gridGroup.style.display   = 'none';
+  if (canvasGroup) canvasGroup.style.display = 'flex';
 
-  if (room && !isFreeform) {
-    document.getElementById('rows-input').value = room.rows;
-    document.getElementById('cols-input').value = room.cols;
-  }
-  if (room && isFreeform) {
+  if (room) {
     document.getElementById('canvas-w-input').value = room.canvasW ?? 900;
     document.getElementById('canvas-h-input').value = room.canvasH ?? 700;
     document.getElementById('snap-grid-input').value = room.snapGrid ?? 0;
   }
 
-  // Layout toggle button
-  const layoutBtn = document.getElementById('layout-toggle-btn');
-  if (layoutBtn) {
-    layoutBtn.textContent = isFreeform ? '⊞ Grid Mode' : '⊞ Freeform';
-    layoutBtn.className   = isFreeform ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
-  }
-
-  // "Edit Layout" mode button: only visible for freeform rooms
+  // "Edit Layout" mode button: always visible (all rooms are freeform)
   const layoutModeBtn = document.getElementById('mode-layout');
-  if (layoutModeBtn) layoutModeBtn.style.display = isFreeform ? '' : 'none';
+  if (layoutModeBtn) layoutModeBtn.style.display = '';
 
   // Direction buttons highlight
   document.querySelectorAll('.dir-btn').forEach(b => {
@@ -2407,7 +2560,7 @@ function openModal(type, id = null) {
   pendingPhoto = null;
 
   if (type === 'room') {
-    document.getElementById('room-modal-title').textContent = id ? 'Rename Room' : 'New Room';
+    document.getElementById('room-modal-title').textContent = id ? 'Rename Class' : 'New Class';
     const room = id ? state.rooms.find(r => r.id === id) : null;
     document.getElementById('room-name-input').value = room?.name ?? '';
     showModalEl('room-modal');
@@ -2555,7 +2708,7 @@ function buildConstraintLists(excludeId, sitNear, doNotSitNear) {
 
 function saveRoomModal() {
   const name = document.getElementById('room-name-input').value.trim();
-  if (!name) { alert('Please enter a room name.'); return; }
+  if (!name) { alert('Please enter a class name.'); return; }
 
   if (editCtx.id) {
     const room = state.rooms.find(r => r.id === editCtx.id);
@@ -2755,11 +2908,6 @@ function newClassSetFromModal() {
    MODE SWITCHING
 ============================================================ */
 function setMode(mode) {
-  // 'layout' only makes sense for freeform rooms
-  if (mode === 'layout' && currentRoom()?.layoutMode !== 'freeform') {
-    alert('Switch this room to "Freeform" layout first using the ⊞ Freeform button in the room header.');
-    return;
-  }
   state.mode = mode;
   document.querySelectorAll('.mode-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
@@ -2773,6 +2921,9 @@ function setMode(mode) {
    EVENT LISTENERS
 ============================================================ */
 function initEvents() {
+
+  // ── Help Guide ───────────────────────────────────────────
+  document.getElementById('help-btn').addEventListener('click', openHelpModal);
 
   // ── Save / Load ──────────────────────────────────────────
   document.getElementById('print-btn').addEventListener('click', printSeatingPlan);
@@ -2827,7 +2978,7 @@ function initEvents() {
       roomUnarchive(room.id);
       renderAll();
     } else {
-      if (confirm(`Archive room "${room.name}"?\nIt will be hidden from the tabs but can be restored.`)) {
+      if (confirm(`Archive class "${room.name}"?\nIt will be hidden from the tabs but can be restored.`)) {
         roomArchive(room.id);
         renderAll();
       }
@@ -2837,7 +2988,7 @@ function initEvents() {
   document.getElementById('delete-room-btn').addEventListener('click', () => {
     const room = currentRoom();
     if (!room) return;
-    if (confirm(`Delete room "${room.name}"? This cannot be undone.`)) {
+    if (confirm(`Delete class "${room.name}"? This cannot be undone.`)) {
       roomDelete(room.id);
       renderAll();
     }
@@ -2864,26 +3015,9 @@ function initEvents() {
     });
   });
 
-  // ── Layout mode toggle (grid ↔ freeform) ──────────────────
-  document.getElementById('layout-toggle-btn').addEventListener('click', () => {
-    const room = currentRoom();
-    if (!room) return;
-    if (room.layoutMode === 'grid') {
-      if (confirm('Switch to freeform layout?\nDesks will be placed at their current grid positions and can be moved freely.\nYou can switch back to grid at any time.')) {
-        roomSwitchToFreeform(room);
-        state.mode = 'layout'; // auto-enter layout mode
-        renderAll();
-        scheduleAutosave();
-      }
-    } else {
-      if (confirm('Switch back to grid layout?\nDesks will be snapped to the nearest grid position.\nThis may reorder your layout.')) {
-        roomSwitchToGrid(room);
-        if (state.mode === 'layout') state.mode = 'move'; // layout mode no longer valid
-        renderAll();
-        scheduleAutosave();
-      }
-    }
-  });
+  // ── Layout mode toggle: hidden (grid mode removed, all rooms are freeform)
+  const layoutToggleBtn = document.getElementById('layout-toggle-btn');
+  if (layoutToggleBtn) layoutToggleBtn.style.display = 'none';
 
   // ── Canvas resize (freeform mode) ─────────────────────────
   document.getElementById('resize-canvas-btn').addEventListener('click', () => {
@@ -2968,6 +3102,12 @@ function initEvents() {
   // ── Class set selector ───────────────────────────────────
   document.getElementById('class-set-select').addEventListener('change', e => {
     state.activeClassSetId = e.target.value || null;
+    // Remember this choice on the current room
+    const room = currentRoom();
+    if (room) {
+      room.classSetId = state.activeClassSetId;
+      scheduleAutosave();
+    }
     renderStudentList();
   });
 
@@ -3225,6 +3365,10 @@ function init() {
     const room = roomCreate('Classroom A', 5, 6);
     state.currentRoomId = room.id;
   }
+
+  // Show version in footer
+  const versionEl = document.getElementById('app-version');
+  if (versionEl) versionEl.textContent = 'v' + APP_VERSION;
 
   renderAll();
 }
