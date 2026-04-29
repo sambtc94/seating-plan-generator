@@ -150,7 +150,7 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
   flex-shrink: 0;
 }
 .panel-header h2  { font-size: 13px; font-weight: 600; }
-.panel-actions    { display: flex; gap: 5px; }
+.panel-actions    { display: flex; gap: 5px; flex-wrap: wrap; }
 
 /* ============================================================
    STUDENT LIST
