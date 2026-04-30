@@ -26,6 +26,8 @@ function initEvents() {
 
   document.getElementById('save-btn').addEventListener('click', saveJSON);
 
+  document.getElementById('share-btn').addEventListener('click', generateShareURL);
+
   document.getElementById('load-btn').addEventListener('click', () =>
     document.getElementById('load-file').click()
   );
@@ -440,17 +442,20 @@ function initMobileNav() {
 /* ============================================================
    INITIALISATION
 ============================================================ */
-function init() {
+async function init() {
   applyDarkModePreference();
   initEvents();
   initMobileNav();
   updateUndoRedoBtns();
 
-  // Try to restore from localStorage; fall back to a default room
-  const restored = loadFromStorage();
-  if (!restored) {
-    const room = roomCreate('Classroom A', 5, 6);
-    state.currentRoomId = room.id;
+  // Try to restore from a shared URL hash first, then fall back to localStorage
+  const restoredFromHash = await loadFromURLHash();
+  if (!restoredFromHash) {
+    const restored = loadFromStorage();
+    if (!restored) {
+      const room = roomCreate('Classroom A', 5, 6);
+      state.currentRoomId = room.id;
+    }
   }
 
   // Show version in footer — try to sync with latest GitHub release
