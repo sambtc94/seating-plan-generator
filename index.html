@@ -381,6 +381,22 @@
     </div>
   </div>
 
+  <!-- SHARE MERGE MODAL -->
+  <div class="modal" id="share-merge-modal">
+    <div class="modal-header">
+      <h3>🔗 Shared Plan Detected</h3>
+    </div>
+    <div class="modal-body">
+      <p>A shared seating plan was found in the link, but you also have existing local data.</p>
+      <p>How would you like to proceed?</p>
+    </div>
+    <div class="modal-footer" style="flex-direction:column;align-items:stretch">
+      <button class="btn btn-primary"   id="share-merge-btn">🔀 Merge — Add shared rooms, students &amp; class sets to my existing data</button>
+      <button class="btn btn-warning"   id="share-replace-btn">🔄 Replace — Discard my existing data and load the shared plan</button>
+      <button class="btn btn-secondary" id="share-cancel-btn">✕ Cancel — Keep my existing data and ignore the shared link</button>
+    </div>
+  </div>
+
 </div><!-- /#modal-overlay -->
 
 <!-- ── MOBILE NAVIGATION ──────────────────────────────── -->

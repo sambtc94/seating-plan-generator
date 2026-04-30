@@ -222,9 +222,85 @@ async function generateShareURL() {
 }
 
 /**
+ * Merge two serialised state objects (local and incoming share) into one.
+ * Items with the same ID in both datasets are resolved in favour of `incoming`
+ * (the shared link is treated as the more intentionally shared version).
+ * Items unique to either dataset are kept as-is.
+ */
+function _mergeStateData(incoming, local) {
+  // `base` items are loaded first; `override` items are loaded second and win on ID conflict.
+  function mergeById(base, override) {
+    const map = new Map();
+    (base     || []).forEach(item => map.set(item.id, item));
+    (override || []).forEach(item => map.set(item.id, item));
+    return [...map.values()];
+  }
+  function mergeByKey(base, override, key) {
+    const map = new Map();
+    (base     || []).forEach(item => map.set(item[key], item));
+    (override || []).forEach(item => map.set(item[key], item));
+    return [...map.values()];
+  }
+
+  // Local data is the base; incoming (shared) data overrides on ID conflicts.
+  const rooms         = mergeById(local.rooms    || [], incoming.rooms    || []).map(normaliseRoom);
+  const students      = mergeById(local.students || [], incoming.students || []).map(normaliseStudent);
+  const classSets     = mergeById(local.classSets     || [], incoming.classSets     || []);
+  const customFlags   = mergeByKey(local.customFlags  || [], incoming.customFlags   || [], 'key');
+  const roomTemplates = mergeById(local.roomTemplates || [], incoming.roomTemplates || []);
+
+  // Prefer incoming's currentRoomId if it exists in merged rooms, else local's
+  const allRoomIds = new Set(rooms.map(r => r.id));
+  const currentRoomId =
+    allRoomIds.has(incoming.currentRoomId) ? incoming.currentRoomId :
+    allRoomIds.has(local.currentRoomId)    ? local.currentRoomId    :
+    rooms.find(r => !r.archived)?.id ?? null;
+
+  return { version: 2, rooms, students, classSets, customFlags, roomTemplates, currentRoomId };
+}
+
+/**
+ * Show the share-merge choice modal and return a Promise that resolves with
+ * 'merge' | 'replace' | 'cancel' once the user makes a selection.
+ */
+function _promptShareChoice() {
+  return new Promise(resolve => {
+    showModalEl('share-merge-modal');
+
+    const btnMerge   = document.getElementById('share-merge-btn');
+    const btnReplace = document.getElementById('share-replace-btn');
+    const btnCancel  = document.getElementById('share-cancel-btn');
+    const overlay    = document.getElementById('modal-overlay');
+
+    function done(choice) {
+      btnMerge.onclick   = null;
+      btnReplace.onclick = null;
+      btnCancel.onclick  = null;
+      document.removeEventListener('keydown', onKeydown);
+      overlay.removeEventListener('click', onOverlayClick);
+      // Close the overlay (the existing events.js handlers may also fire — that's harmless)
+      document.getElementById('modal-overlay').classList.remove('open');
+      resolve(choice);
+    }
+
+    btnMerge.onclick   = () => done('merge');
+    btnReplace.onclick = () => done('replace');
+    btnCancel.onclick  = () => done('cancel');
+
+    function onKeydown(e)      { if (e.key === 'Escape') done('cancel'); }
+    function onOverlayClick(e) { if (e.target === overlay) done('cancel'); }
+
+    document.addEventListener('keydown', onKeydown);
+    overlay.addEventListener('click', onOverlayClick);
+  });
+}
+
+/**
  * Check the URL hash for embedded share data and load it into state.
  * Returns true if share data was found and successfully applied.
  * The hash is cleared from the address bar after a successful load.
+ * If existing local data is present the user is prompted to merge, replace,
+ * or cancel before any state changes are made.
  */
 async function loadFromURLHash() {
   const hash = window.location.hash;
@@ -242,8 +318,32 @@ async function loadFromURLHash() {
     } else {
       return false;
     }
-    const data = JSON.parse(json);
-    if (!applyStateData(data)) return false;
+    const sharedData = JSON.parse(json);
+    if (!sharedData || (sharedData.version !== 1 && sharedData.version !== 2)) return false;
+
+    // Read existing local data (if any) to decide whether to prompt
+    let localData = null;
+    try {
+      const raw = localStorage.getItem(AUTOSAVE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && (parsed.version === 1 || parsed.version === 2)) localData = parsed;
+      }
+    } catch (_) {}
+
+    const hasLocalContent = localData &&
+      ((localData.rooms    || []).length > 0 ||
+       (localData.students || []).length > 0);
+
+    let dataToApply = sharedData;
+    if (hasLocalContent) {
+      const choice = await _promptShareChoice();
+      if (choice === 'cancel') return false;
+      if (choice === 'merge')  dataToApply = _mergeStateData(sharedData, localData);
+      // choice === 'replace': use sharedData as-is
+    }
+
+    if (!applyStateData(dataToApply)) return false;
     // Clean up the address bar without triggering a page reload
     history.replaceState(null, '', window.location.pathname + window.location.search);
     return true;
