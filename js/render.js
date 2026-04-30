@@ -888,9 +888,8 @@ function buildMiniStudent(student, seatId) {
 
   const nameEl = document.createElement('div');
   nameEl.className = 'mini-name';
-  // Show first name only (or full if short enough)
-  const firstName = student.name.split(' ')[0];
-  nameEl.textContent = firstName.length > 8 ? firstName.slice(0, 7) + '\u2026' : firstName;
+  // Show full name, truncated only if very long; CSS wraps it to 2 lines
+  nameEl.textContent = student.name.length > 20 ? student.name.slice(0, 19) + '\u2026' : student.name;
 
   wrap.appendChild(av);
   wrap.appendChild(nameEl);
