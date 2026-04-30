@@ -55,20 +55,6 @@ function initEvents() {
     renderTabs();
   });
 
-  document.getElementById('resize-btn').addEventListener('click', () => {
-    const room = currentRoom();
-    if (!room) return;
-    const rows = parseInt(document.getElementById('rows-input').value, 10);
-    const cols = parseInt(document.getElementById('cols-input').value, 10);
-    if (rows < 1 || cols < 1 || rows > 30 || cols > 30) {
-      alert('Rows and columns must be between 1 and 30.'); return;
-    }
-    roomResize(room, rows, cols);
-    renderGrid();
-    renderClusterPanel();
-    scheduleAutosave();
-  });
-
   document.getElementById('archive-room-btn').addEventListener('click', () => {
     const room = currentRoom();
     if (!room) return;
@@ -112,10 +98,6 @@ function initEvents() {
       scheduleAutosave();
     });
   });
-
-  // ── Layout mode toggle: hidden (grid mode removed, all rooms are freeform)
-  const layoutToggleBtn = document.getElementById('layout-toggle-btn');
-  if (layoutToggleBtn) layoutToggleBtn.style.display = 'none';
 
   // ── Canvas resize (freeform mode) ─────────────────────────
   document.getElementById('resize-canvas-btn').addEventListener('click', () => {

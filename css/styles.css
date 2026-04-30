@@ -983,15 +983,15 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
 .btn:disabled:active { transform: none; }
 
 /* ============================================================
-   NEW FEATURES — appended
+   ABSENT STUDENTS
 ============================================================ */
-
-/* Feature 2: Absent student */
 .student-absent { opacity: 0.45; text-decoration: line-through; }
 .mini-absent .mini-avatar { opacity: 0.4; }
 .mini-absent .mini-name   { opacity: 0.4; }
 
-/* Feature 3: Notes dot on seat cell */
+/* ============================================================
+   NOTES DOT (seat cell indicator)
+============================================================ */
 .notes-dot {
   font-size: 9px;
   line-height: 1;
@@ -1000,7 +1000,9 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
   display: inline-block;
 }
 
-/* Feature 5: Position preference label in toolbar checkbox */
+/* ============================================================
+   TOOLBAR CHECKBOX LABEL
+============================================================ */
 .toolbar-chk-label {
   display: inline-flex;
   align-items: center;
@@ -1011,7 +1013,9 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
   user-select: none;
 }
 
-/* Feature 9: Pin badge on seat cell */
+/* ============================================================
+   PIN BADGE (seat cell overlay)
+============================================================ */
 .pin-badge {
   position: absolute;
   top: 1px;
@@ -1022,7 +1026,9 @@ body.dark-mode .seat-cell.labeled-seat { background: #1e2436; border-color: #4a5
   z-index: 2;
 }
 
-/* Feature 20: Audit violation highlight */
+/* ============================================================
+   AUDIT VIOLATION HIGHLIGHT
+============================================================ */
 .audit-violation {
   outline: 2px solid #e74c3c !important;
   outline-offset: -2px;

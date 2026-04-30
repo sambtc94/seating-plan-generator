@@ -110,10 +110,6 @@ function printSeatingPlan() {
   window.print();
 }
 
-/**
- * Import students from a JSON array.
- * Supports constraint references by student name (resolved to IDs).
- */
 /* ============================================================
    URL-BASED SHARING
 ============================================================ */
