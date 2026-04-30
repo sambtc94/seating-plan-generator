@@ -7,6 +7,7 @@
 const AUTOSAVE_KEY          = 'spg_autosave_v2';
 const AUTOSAVE_DELAY_MS     = 600;
 const BADGE_FADE_DURATION_MS = 2500;
+const MAX_SHARE_URL_LENGTH   = 200000;
 
 function autosave() {
   try {
@@ -203,7 +204,7 @@ async function generateShareURL() {
 
   const url = window.location.href.split('#')[0] + '#share=' + fragment;
 
-  if (url.length > 200000) {
+  if (url.length > MAX_SHARE_URL_LENGTH) {
     alert(
       'The share URL is very large (' + Math.round(url.length / 1024) + ' KB).\n' +
       'This is usually caused by student photos stored in the plan.\n\n' +
@@ -215,8 +216,9 @@ async function generateShareURL() {
   try {
     await navigator.clipboard.writeText(url);
     showAutosaveBadge('🔗 Link copied!');
-  } catch (_) {
+  } catch (e) {
     // Clipboard API unavailable (e.g. non-HTTPS context) — show prompt as fallback
+    console.warn('Clipboard write failed:', e);
     prompt('Copy this share link:', url);
   }
 }
@@ -247,7 +249,8 @@ async function loadFromURLHash() {
     // Clean up the address bar without triggering a page reload
     history.replaceState(null, '', window.location.pathname + window.location.search);
     return true;
-  } catch (_) {
+  } catch (e) {
+    console.warn('Failed to load state from URL hash:', e);
     return false;
   }
 }
