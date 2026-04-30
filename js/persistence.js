@@ -7,6 +7,8 @@
 const AUTOSAVE_KEY          = 'spg_autosave_v2';
 const AUTOSAVE_DELAY_MS     = 600;
 const BADGE_FADE_DURATION_MS = 2500;
+// Most browsers cap URLs at ~2 MB; 200 KB keeps clipboard/sharing practical
+// and avoids issues with email clients that truncate long links.
 const MAX_SHARE_URL_LENGTH   = 200000;
 
 function autosave() {
@@ -202,7 +204,7 @@ async function generateShareURL() {
 
   if (url.length > MAX_SHARE_URL_LENGTH) {
     alert(
-      'The share URL is very large (' + Math.round(url.length / 1024) + ' KB).\n' +
+      'The share URL is very large (' + Math.round(url.length / 512) + ' KB).\n' +
       'This is usually caused by student photos stored in the plan.\n\n' +
       'Consider using "Save JSON" to share large plans instead.'
     );
