@@ -339,6 +339,7 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 }
 .mini-student:active { cursor: grabbing; }
 .mini-student:hover  { background: rgba(0,0,0,.04); }
+.mini-pinned         { cursor: not-allowed !important; }
 
 .mini-avatar {
   width: 36px; height: 36px; border-radius: 50%;

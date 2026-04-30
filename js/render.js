@@ -15,6 +15,9 @@ function handleDrop(targetSeatId) {
   if (!studentId) return;
   if (target.studentId === studentId) { resetDrag(); return; }
 
+  // Do not displace a pinned student from their seat
+  if (target.pinned && target.studentId) { resetDrag(); return; }
+
   pushHistory();
 
   const displacedId = target.studentId; // may be null
@@ -856,17 +859,23 @@ function showInfoBar(text) {
 }
 
 function buildMiniStudent(student, seatId) {
-  const wrap = document.createElement('div');
-  wrap.className = 'mini-student' + (student.absent ? ' mini-absent' : '');
-  wrap.draggable = true;
+  const room   = currentRoom();
+  const seat   = seatId && room ? seatById(room, seatId) : null;
+  const pinned = seat ? !!seat.pinned : false;
 
-  wrap.addEventListener('dragstart', e => {
-    e.stopPropagation();
-    state.drag.studentId  = student.id;
-    state.drag.fromSeatId = seatId;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', student.id);
-  });
+  const wrap = document.createElement('div');
+  wrap.className = 'mini-student' + (student.absent ? ' mini-absent' : '') + (pinned ? ' mini-pinned' : '');
+  wrap.draggable = !pinned;
+
+  if (!pinned) {
+    wrap.addEventListener('dragstart', e => {
+      e.stopPropagation();
+      state.drag.studentId  = student.id;
+      state.drag.fromSeatId = seatId;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', student.id);
+    });
+  }
 
   const av = document.createElement('div');
   av.className = 'mini-avatar ' + (student.gender || '');

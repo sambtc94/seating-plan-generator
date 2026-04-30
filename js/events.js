@@ -453,9 +453,19 @@ function init() {
     state.currentRoomId = room.id;
   }
 
-  // Show version in footer
+  // Show version in footer — try to sync with latest GitHub release
   const versionEl = document.getElementById('app-version');
-  if (versionEl) versionEl.textContent = 'v' + APP_VERSION;
+  if (versionEl) {
+    versionEl.textContent = 'v' + APP_VERSION;
+    fetch('https://api.github.com/repos/sambtc94/seating-plan-generator/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data && data.tag_name) versionEl.textContent = data.tag_name;
+      })
+      .catch(() => {}); // silently fall back to hardcoded version
+  }
 
   renderAll();
 }
