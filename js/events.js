@@ -453,9 +453,38 @@ function init() {
     state.currentRoomId = room.id;
   }
 
-  // Show version in footer
+  // Show version in footer — try to sync with latest GitHub release
   const versionEl = document.getElementById('app-version');
-  if (versionEl) versionEl.textContent = 'v' + APP_VERSION;
+  if (versionEl) {
+    versionEl.textContent = 'v' + APP_VERSION;
+    const TAG_RE = /^v?\d+(\.\d+)*(-[\w.]+)?$/;
+    const CACHE_KEY = 'spg_release_tag';
+    const CACHE_TTL = 3600 * 1000; // 1 hour
+    const cached = (() => {
+      try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        if (Date.now() - obj.ts < CACHE_TTL && TAG_RE.test(obj.tag)) return obj.tag;
+        return null;
+      } catch (_) { return null; }
+    })();
+    if (cached) {
+      versionEl.textContent = cached;
+    } else {
+      fetch('https://api.github.com/repos/sambtc94/seating-plan-generator/releases/latest', {
+        headers: { Accept: 'application/vnd.github+json' }
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data && typeof data.tag_name === 'string' && TAG_RE.test(data.tag_name)) {
+            try { localStorage.setItem(CACHE_KEY, JSON.stringify({ tag: data.tag_name, ts: Date.now() })); } catch (_) {}
+            versionEl.textContent = data.tag_name;
+          }
+        })
+        .catch(() => {}); // silently fall back to hardcoded version
+    }
+  }
 
   renderAll();
 }
