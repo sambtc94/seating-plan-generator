@@ -23,6 +23,7 @@
     <button class="btn btn-secondary" id="save-btn">💾 Save JSON</button>
     <button class="btn btn-secondary" id="load-btn">📂 Load JSON</button>
     <input type="file" id="load-file" accept=".json" style="display:none" />
+    <button class="btn btn-secondary" id="share-btn" title="Copy a shareable link to the clipboard">🔗 Share</button>
   </div>
 </header>
 
@@ -105,13 +106,7 @@
         <span class="capacity-badge" id="capacity-badge"></span>
       </div>
     <div class="room-config">
-        <!-- Grid size — hidden (all rooms are freeform) -->
-        <div id="grid-size-group" class="room-config-group" style="display:none">
-          <label>Rows:<input type="number" id="rows-input" value="5" min="1" max="30" /></label>
-          <label>Cols:<input type="number" id="cols-input" value="6" min="1" max="30" /></label>
-          <button class="btn btn-secondary btn-sm" id="resize-btn">↔ Resize</button>
-        </div>
-        <!-- Canvas size — always shown (freeform only) -->
+        <!-- Canvas size (freeform mode) -->
         <div id="canvas-size-group" class="room-config-group">
           <label>W:<input type="number" id="canvas-w-input" value="900" min="300" max="3000" step="50" /></label>
           <label>H:<input type="number" id="canvas-h-input" value="700" min="200" max="2000" step="50" /></label>
@@ -126,7 +121,6 @@
         <button class="btn btn-sm dir-btn"         data-dir="right"  title="Front of class at right" >→</button>
         <button class="btn btn-sm dir-btn"         data-dir="bottom" title="Front of class at bottom">↓</button>
         <button class="btn btn-sm dir-btn"         data-dir="left"   title="Front of class at left"  >←</button>
-        <button class="btn btn-secondary btn-sm" id="layout-toggle-btn" style="display:none">⊞ Freeform</button>
         <button class="btn btn-secondary  btn-sm" id="duplicate-room-btn">⧉ Duplicate</button>
         <button class="btn btn-warning    btn-sm" id="archive-room-btn">📦 Archive</button>
         <button class="btn btn-danger    btn-sm" id="delete-room-btn">🗑 Delete Room</button>

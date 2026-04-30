@@ -26,6 +26,8 @@ function initEvents() {
 
   document.getElementById('save-btn').addEventListener('click', saveJSON);
 
+  document.getElementById('share-btn').addEventListener('click', generateShareURL);
+
   document.getElementById('load-btn').addEventListener('click', () =>
     document.getElementById('load-file').click()
   );
@@ -51,20 +53,6 @@ function initEvents() {
   document.getElementById('toggle-archived-btn').addEventListener('click', () => {
     state.showArchived = !state.showArchived;
     renderTabs();
-  });
-
-  document.getElementById('resize-btn').addEventListener('click', () => {
-    const room = currentRoom();
-    if (!room) return;
-    const rows = parseInt(document.getElementById('rows-input').value, 10);
-    const cols = parseInt(document.getElementById('cols-input').value, 10);
-    if (rows < 1 || cols < 1 || rows > 30 || cols > 30) {
-      alert('Rows and columns must be between 1 and 30.'); return;
-    }
-    roomResize(room, rows, cols);
-    renderGrid();
-    renderClusterPanel();
-    scheduleAutosave();
   });
 
   document.getElementById('archive-room-btn').addEventListener('click', () => {
@@ -110,10 +98,6 @@ function initEvents() {
       scheduleAutosave();
     });
   });
-
-  // ── Layout mode toggle: hidden (grid mode removed, all rooms are freeform)
-  const layoutToggleBtn = document.getElementById('layout-toggle-btn');
-  if (layoutToggleBtn) layoutToggleBtn.style.display = 'none';
 
   // ── Canvas resize (freeform mode) ─────────────────────────
   document.getElementById('resize-canvas-btn').addEventListener('click', () => {
@@ -440,17 +424,20 @@ function initMobileNav() {
 /* ============================================================
    INITIALISATION
 ============================================================ */
-function init() {
+async function init() {
   applyDarkModePreference();
   initEvents();
   initMobileNav();
   updateUndoRedoBtns();
 
-  // Try to restore from localStorage; fall back to a default room
-  const restored = loadFromStorage();
-  if (!restored) {
-    const room = roomCreate('Classroom A', 5, 6);
-    state.currentRoomId = room.id;
+  // Try to restore from a shared URL hash first, then fall back to localStorage
+  const restoredFromHash = await loadFromURLHash();
+  if (!restoredFromHash) {
+    const restored = loadFromStorage();
+    if (!restored) {
+      const room = roomCreate('Classroom A', 5, 6);
+      state.currentRoomId = room.id;
+    }
   }
 
   // Show version in footer — try to sync with latest GitHub release

@@ -7,6 +7,9 @@
 const AUTOSAVE_KEY          = 'spg_autosave_v2';
 const AUTOSAVE_DELAY_MS     = 600;
 const BADGE_FADE_DURATION_MS = 2500;
+// Most browsers cap URLs at ~2 MB; 200 KB keeps clipboard/sharing practical
+// and avoids issues with email clients that truncate long links.
+const MAX_SHARE_URL_LENGTH   = 200000;
 
 function autosave() {
   try {
@@ -109,10 +112,147 @@ function printSeatingPlan() {
   window.print();
 }
 
+/* ============================================================
+   URL-BASED SHARING
+============================================================ */
+
+/** Encode a Uint8Array to base64url (URL-safe, no padding). */
+function _bytesToBase64url(bytes) {
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+/** Decode a base64url string to Uint8Array. */
+function _base64urlToBytes(str) {
+  const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '=='.slice(0, (4 - b64.length % 4) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** Compress a UTF-8 string to gzip bytes via the CompressionStream API. */
+async function _gzipEncode(text) {
+  const stream = new CompressionStream('gzip');
+  const writer = stream.writable.getWriter();
+  writer.write(new TextEncoder().encode(text));
+  writer.close();
+  const chunks = [];
+  const reader = stream.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+/** Decompress gzip bytes to a UTF-8 string via the DecompressionStream API. */
+async function _gzipDecode(bytes) {
+  const stream = new DecompressionStream('gzip');
+  const writer = stream.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const chunks = [];
+  const reader = stream.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return new TextDecoder().decode(out);
+}
+
 /**
- * Import students from a JSON array.
- * Supports constraint references by student name (resolved to IDs).
+ * Serialise the current state into the URL hash and copy the link to the
+ * clipboard.  The hash format is:
+ *   #share=gz.<base64url-of-gzip-compressed-json>   (modern browsers)
+ *   #share=b64.<base64url-of-plain-json>             (fallback)
  */
+async function generateShareURL() {
+  const data = {
+    version:       2,
+    rooms:         state.rooms,
+    students:      state.students,
+    classSets:     state.classSets,
+    customFlags:   state.customFlags,
+    roomTemplates: state.roomTemplates,
+    currentRoomId: state.currentRoomId
+  };
+  const json = JSON.stringify(data);
+  let fragment;
+  try {
+    if (typeof CompressionStream !== 'undefined') {
+      fragment = 'gz.' + _bytesToBase64url(await _gzipEncode(json));
+    } else {
+      fragment = 'b64.' + _bytesToBase64url(new TextEncoder().encode(json));
+    }
+  } catch (e) {
+    alert('Could not generate share link: ' + e.message);
+    return;
+  }
+
+  const url = window.location.href.split('#')[0] + '#share=' + fragment;
+
+  if (url.length > MAX_SHARE_URL_LENGTH) {
+    alert(
+      'The share URL is very large (' + Math.round(url.length / 512) + ' KB).\n' +
+      'This is usually caused by student photos stored in the plan.\n\n' +
+      'Consider using "Save JSON" to share large plans instead.'
+    );
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(url);
+    showAutosaveBadge('🔗 Link copied!');
+  } catch (e) {
+    // Clipboard API unavailable (e.g. non-HTTPS context) — show prompt as fallback
+    console.warn('Clipboard write failed:', e);
+    prompt('Copy this share link:', url);
+  }
+}
+
+/**
+ * Check the URL hash for embedded share data and load it into state.
+ * Returns true if share data was found and successfully applied.
+ * The hash is cleared from the address bar after a successful load.
+ */
+async function loadFromURLHash() {
+  const hash = window.location.hash;
+  if (!hash.startsWith('#share=')) return false;
+
+  const payload = hash.slice('#share='.length);
+  if (!payload) return false;
+
+  try {
+    let json;
+    if (payload.startsWith('gz.')) {
+      json = await _gzipDecode(_base64urlToBytes(payload.slice(3)));
+    } else if (payload.startsWith('b64.')) {
+      json = new TextDecoder().decode(_base64urlToBytes(payload.slice(4)));
+    } else {
+      return false;
+    }
+    const data = JSON.parse(json);
+    if (!applyStateData(data)) return false;
+    // Clean up the address bar without triggering a page reload
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    return true;
+  } catch (e) {
+    console.warn('Failed to load state from URL hash:', e);
+    return false;
+  }
+}
+
 /* ============================================================
    CSV EXPORT (STUDENTS)
 ============================================================ */

@@ -437,9 +437,7 @@ function updateRoomControls(room) {
   }
 
   // Always show canvas size group (all rooms are freeform)
-  const gridGroup   = document.getElementById('grid-size-group');
   const canvasGroup = document.getElementById('canvas-size-group');
-  if (gridGroup)   gridGroup.style.display   = 'none';
   if (canvasGroup) canvasGroup.style.display = 'flex';
 
   if (room) {
@@ -448,123 +446,10 @@ function updateRoomControls(room) {
     document.getElementById('snap-grid-input').value = room.snapGrid ?? 0;
   }
 
-  // "Edit Layout" mode button: always visible (all rooms are freeform)
-  const layoutModeBtn = document.getElementById('mode-layout');
-  if (layoutModeBtn) layoutModeBtn.style.display = '';
-
   // Direction buttons highlight
   document.querySelectorAll('.dir-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.dir === (room?.frontDirection ?? 'top'));
   });
-}
-
-/* ── Regular (grid) rendering ────────────────────────────── */
-function renderRegularGrid(room, grid) {
-  grid.style.gridTemplateColumns = `repeat(${room.cols}, 78px)`;
-  grid.style.gridTemplateRows    = `repeat(${room.rows}, 78px)`;
-
-  for (let r = 0; r < room.rows; r++) {
-    for (let c = 0; c < room.cols; c++) {
-      const seat = room.seats.find(s => s.row === r && s.col === c);
-      const cell = document.createElement('div');
-      cell.className = 'seat-cell';
-
-      if (!seat || !seat.enabled) {
-        cell.classList.add('seat-disabled');
-        if (state.mode === 'toggle') cell.classList.add('toggleable');
-
-        cell.addEventListener('click', () => {
-          if (state.mode !== 'toggle') return;
-          pushHistory();
-          if (!seat) {
-            room.seats.push(makeSeat(room.id, r, c));
-          } else {
-            seat.enabled = true;
-          }
-          scheduleAutosave();
-          renderGrid();
-        });
-
-        grid.appendChild(cell);
-        continue;
-      }
-
-      // Enabled seat
-      cell.dataset.seatId = seat.id;
-      applyClusterStyling(cell, seat, room);
-
-      if (state.mode === 'toggle')  cell.classList.add('toggleable');
-      if (state.mode === 'cluster') cell.classList.add('cluster-mode');
-
-      // Labeled seat (teacher desk, whiteboard, etc.)
-      if (seat.label) {
-        cell.classList.add('labeled-seat');
-        cell.appendChild(buildLabeledSeat(seat));
-        const lInfo = SEAT_LABELS[seat.label];
-        cell.addEventListener('mouseenter', () => showInfoBar(lInfo ? lInfo.name : seat.label));
-        cell.addEventListener('mouseleave', () => showInfoBar(''));
-        cell.addEventListener('contextmenu', e => {
-          e.preventDefault();
-          showSeatContextMenu(e.clientX, e.clientY, seat, room);
-        });
-        grid.appendChild(cell);
-        continue;
-      }
-
-      if (seat.studentId) {
-        cell.classList.add('has-student');
-        const student = studentById(seat.studentId);
-        if (student) cell.appendChild(buildMiniStudent(student, seat.id));
-        // Audit mode (Feature 20)
-        if (state.auditMode && student) {
-          if (hasSeatViolation(seat, student, room)) cell.classList.add('audit-violation');
-        }
-        // Pin badge (Feature 9)
-        if (seat.pinned) {
-          const pb = document.createElement('span');
-          pb.className = 'pin-badge';
-          pb.textContent = '\u{1F4CC}';
-          pb.title = 'Pinned';
-          cell.appendChild(pb);
-        }
-      }
-
-      cell.addEventListener('click', () => {
-        if (state.mode === 'toggle') {
-          pushHistory();
-          seat.enabled   = false;
-          seat.studentId = null;
-          seat.clusterId = null;
-          scheduleAutosave();
-          renderGrid();
-        } else if (state.mode === 'cluster') {
-          handleClusterClick(seat, room);
-        }
-      });
-
-      cell.addEventListener('contextmenu', e => {
-        e.preventDefault();
-        showSeatContextMenu(e.clientX, e.clientY, seat, room);
-      });
-
-      if (state.mode === 'move') attachDropTarget(cell, seat.id);
-
-      cell.addEventListener('mouseenter', () => {
-        if (seat.studentId) {
-          showStudentHover(seat.studentId);
-          showSeatTooltip(seat.studentId, cell);
-        } else {
-          showInfoBar(`Seat row ${r + 1}, col ${c + 1} — empty`);
-        }
-      });
-      cell.addEventListener('mouseleave', () => {
-        showInfoBar('');
-        hideSeatTooltip();
-      });
-
-      grid.appendChild(cell);
-    }
-  }
 }
 
 /* ── Freeform rendering ──────────────────────────────────── */
