@@ -457,14 +457,33 @@ function init() {
   const versionEl = document.getElementById('app-version');
   if (versionEl) {
     versionEl.textContent = 'v' + APP_VERSION;
-    fetch('https://api.github.com/repos/sambtc94/seating-plan-generator/releases/latest', {
-      headers: { Accept: 'application/vnd.github+json' }
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data && data.tag_name) versionEl.textContent = data.tag_name;
+    const TAG_RE = /^v?\d+(\.\d+)*(-[\w.]+)?$/;
+    const CACHE_KEY = 'spg_release_tag';
+    const CACHE_TTL = 3600 * 1000; // 1 hour
+    const cached = (() => {
+      try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        if (Date.now() - obj.ts < CACHE_TTL && TAG_RE.test(obj.tag)) return obj.tag;
+        return null;
+      } catch (_) { return null; }
+    })();
+    if (cached) {
+      versionEl.textContent = cached;
+    } else {
+      fetch('https://api.github.com/repos/sambtc94/seating-plan-generator/releases/latest', {
+        headers: { Accept: 'application/vnd.github+json' }
       })
-      .catch(() => {}); // silently fall back to hardcoded version
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data && typeof data.tag_name === 'string' && TAG_RE.test(data.tag_name)) {
+            try { localStorage.setItem(CACHE_KEY, JSON.stringify({ tag: data.tag_name, ts: Date.now() })); } catch (_) {}
+            versionEl.textContent = data.tag_name;
+          }
+        })
+        .catch(() => {}); // silently fall back to hardcoded version
+    }
   }
 
   renderAll();
