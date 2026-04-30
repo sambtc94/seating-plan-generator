@@ -568,7 +568,7 @@ function renderFreeformGrid(room, grid) {
       // (DOM replacement via cloneNode can cause browsers to re-fire pointerdown on the
       // new element while the pointer is still physically held down, producing duplicates.)
       const tooClose = room.seats.some(s =>
-        Math.abs((s.x ?? 0) - x) < SEAT_HALF && Math.abs((s.y ?? 0) - y) < SEAT_HALF
+        Math.abs((s.x ?? 0) - x) < SEAT_WIDTH && Math.abs((s.y ?? 0) - y) < SEAT_WIDTH
       );
       if (tooClose) return;
       room.seats.push(makeFreeformSeat(room.id, x, y));
@@ -609,11 +609,23 @@ function attachFreeformDrag(cell, seat, room) {
       cell.removeEventListener('pointerup',   onUp);
       cell.classList.remove('dragging');
       if (moved) {
-        pushHistory();
-        // seat.x/y are already snapped (applied in onMove); just round to whole pixels
         seat.x = Math.round(seat.x);
         seat.y = Math.round(seat.y);
-        scheduleAutosave();
+        // Revert if the new position overlaps another seat
+        const overlaps = room.seats.some(s =>
+          s.id !== seat.id &&
+          Math.abs((s.x ?? 0) - seat.x) < SEAT_WIDTH &&
+          Math.abs((s.y ?? 0) - seat.y) < SEAT_WIDTH
+        );
+        if (overlaps) {
+          seat.x = origX;
+          seat.y = origY;
+          cell.style.left = seat.x + 'px';
+          cell.style.top  = seat.y + 'px';
+        } else {
+          pushHistory();
+          scheduleAutosave();
+        }
       }
     };
 

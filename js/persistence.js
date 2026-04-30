@@ -125,7 +125,11 @@ function _bytesToBase64url(bytes) {
 
 /** Decode a base64url string to Uint8Array. */
 function _base64urlToBytes(str) {
-  const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  // Tolerate URLs that were encoded with padding, or that got URL-percent-encoded in transit.
+  let s = str;
+  try { s = decodeURIComponent(s); } catch (_) {}
+  s = s.replace(/=/g, ''); // strip any existing '=' padding before re-adding it
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
   const padded = b64 + '=='.slice(0, (4 - b64.length % 4) % 4);
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
