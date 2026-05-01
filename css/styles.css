@@ -230,6 +230,36 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 .dir-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 /* ============================================================
+   ZOOM CONTROLS (shown only on mobile)
+============================================================ */
+.zoom-controls {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.zoom-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 34px; height: 34px;
+  font-size: 18px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+.zoom-btn:active { background: var(--border); }
+.zoom-reset-btn  { font-size: 15px; }
+.zoom-level-display {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  min-width: 38px; text-align: center;
+}
+
+/* ============================================================
    GRID
 ============================================================ */
 .grid-scroll {
@@ -237,7 +267,13 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
   display: flex; align-items: flex-start; justify-content: center;
 }
 
-.grid-wrapper { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+/* Outer wrapper that grows to the visually-scaled size so the
+   scroll container knows how much space to reserve. */
+.zoom-outer {
+  flex-shrink: 0;
+}
+
+.grid-wrapper { display: flex; flex-direction: column; align-items: center; gap: 10px; transform-origin: top left; }
 
 /* ── Front of class direction variants ── */
 #grid-wrapper[data-front-dir="top"]    { flex-direction: column; }
@@ -541,6 +577,9 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
   /* Show mobile nav bar */
   .mobile-tab-bar { display: flex; }
 
+  /* Show zoom controls on the seating plan view */
+  .zoom-controls { display: flex; }
+
   /* Account for mobile nav bar in app body height */
   .app-body {
     height: calc(100vh - var(--header-h) - var(--tabs-h) - var(--toolbar-h) - var(--footer-h) - var(--mobile-nav-h));
@@ -607,6 +646,8 @@ header h1    { font-size: 1.1rem; font-weight: 600; }
 
 /* ── Dark mode: mobile tab bar ── */
 body.dark-mode .mobile-tab-bar { background: #0f1319; border-top-color: rgba(255,255,255,.06); }
+/* ── Dark mode: zoom controls ── */
+body.dark-mode .zoom-controls { background: #1e272e; border-bottom-color: rgba(255,255,255,.06); }
 
 /* ============================================================
    AUTOSAVE BADGE
@@ -712,6 +753,7 @@ body.dark-mode .mobile-tab-bar { background: #0f1319; border-top-color: rgba(255
   .room-config,
   .seat-info-bar,
   .mobile-tab-bar,
+  .zoom-controls,
   .app-footer,
   .autosave-badge { display: none !important; }
 

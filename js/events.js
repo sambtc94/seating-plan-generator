@@ -402,6 +402,79 @@ function initEvents() {
 }
 
 /* ============================================================
+   ZOOM (pinch-to-zoom + zoom buttons for mobile)
+============================================================ */
+let _zoomLevel = 1.0;
+const ZOOM_MIN  = 0.25;
+const ZOOM_MAX  = 4.0;
+const ZOOM_STEP = 0.25;
+
+function applyZoom(zoom) {
+  _zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom));
+
+  const wrapper = document.getElementById('grid-wrapper');
+  const outer   = document.getElementById('zoom-outer');
+  if (!wrapper || !outer) return;
+
+  // offsetWidth/Height return layout dimensions unaffected by CSS transforms,
+  // so we can always get the natural (unscaled) size reliably.
+  const naturalW = wrapper.offsetWidth;
+  const naturalH = wrapper.offsetHeight;
+
+  wrapper.style.transform = `scale(${_zoomLevel})`;
+
+  // Resize the outer container to the visually-scaled dimensions so that the
+  // scroll container (.grid-scroll) correctly reflects the zoomed content size.
+  outer.style.width  = (naturalW * _zoomLevel) + 'px';
+  outer.style.height = (naturalH * _zoomLevel) + 'px';
+
+  const display = document.getElementById('zoom-level-display');
+  if (display) display.textContent = Math.round(_zoomLevel * 100) + '%';
+}
+
+function initZoom() {
+  const zoomInBtn    = document.getElementById('zoom-in-btn');
+  const zoomOutBtn   = document.getElementById('zoom-out-btn');
+  const zoomResetBtn = document.getElementById('zoom-reset-btn');
+  const scroll       = document.getElementById('grid-scroll');
+
+  if (zoomInBtn)    zoomInBtn.addEventListener('click',    () => applyZoom(_zoomLevel + ZOOM_STEP));
+  if (zoomOutBtn)   zoomOutBtn.addEventListener('click',   () => applyZoom(_zoomLevel - ZOOM_STEP));
+  if (zoomResetBtn) zoomResetBtn.addEventListener('click', () => applyZoom(1.0));
+
+  if (!scroll) return;
+
+  // Pinch-to-zoom on the grid scroll container
+  let pinchStartDist = null;
+  let pinchStartZoom = 1.0;
+
+  scroll.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      pinchStartDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      pinchStartZoom = _zoomLevel;
+    }
+  }, { passive: false });
+
+  scroll.addEventListener('touchmove', e => {
+    if (e.touches.length === 2 && pinchStartDist !== null) {
+      e.preventDefault(); // prevent browser page-zoom and scroll during pinch
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      applyZoom(pinchStartZoom * (dist / pinchStartDist));
+    }
+  }, { passive: false });
+
+  scroll.addEventListener('touchend', () => {
+    if (pinchStartDist !== null) pinchStartDist = null;
+  }, { passive: false });
+}
+
+/* ============================================================
    MOBILE NAVIGATION
 ============================================================ */
 function initMobileNav() {
@@ -428,6 +501,7 @@ async function init() {
   applyDarkModePreference();
   initEvents();
   initMobileNav();
+  initZoom();
   updateUndoRedoBtns();
 
   // Try to restore from a shared URL hash first, then fall back to localStorage
