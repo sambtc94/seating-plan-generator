@@ -414,6 +414,9 @@ function renderGrid() {
   if (state.mode === 'layout') {
     showInfoBar('Click canvas to add desk  ·  Drag to move  ·  Right-click to delete');
   }
+
+  // Re-apply current zoom level after the grid DOM is rebuilt
+  if (typeof applyZoom === 'function') applyZoom(typeof _zoomLevel !== 'undefined' ? _zoomLevel : 1.0);
 }
 
 /* ── Front label & direction ─────────────────────────────── */

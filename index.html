@@ -126,10 +126,18 @@
         <button class="btn btn-danger    btn-sm" id="delete-room-btn">🗑 Delete Room</button>
       </div>
     </div>
-    <div class="grid-scroll">
-      <div class="grid-wrapper" id="grid-wrapper">
-        <div class="front-label" id="front-label">▲ FRONT OF CLASS</div>
-        <div class="room-grid" id="room-grid"></div>
+    <div class="zoom-controls" id="zoom-controls">
+      <button class="zoom-btn" id="zoom-out-btn" title="Zoom out">−</button>
+      <span class="zoom-level-display" id="zoom-level-display">100%</span>
+      <button class="zoom-btn" id="zoom-in-btn" title="Zoom in">＋</button>
+      <button class="zoom-btn zoom-reset-btn" id="zoom-reset-btn" title="Reset zoom">⤢</button>
+    </div>
+    <div class="grid-scroll" id="grid-scroll">
+      <div class="zoom-outer" id="zoom-outer">
+        <div class="grid-wrapper" id="grid-wrapper">
+          <div class="front-label" id="front-label">▲ FRONT OF CLASS</div>
+          <div class="room-grid" id="room-grid"></div>
+        </div>
       </div>
     </div>
     <div id="seat-info-bar" class="seat-info-bar"></div>
